@@ -1,0 +1,20 @@
+name: keepalive
+# GitHub pauses scheduled workflows in repositories with no commits for 60 days.
+# This commits a heartbeat every 3 weeks so the dashboard never silently stops.
+on:
+  schedule:
+    - cron: "0 5 1,22 * *"
+  workflow_dispatch: {}
+permissions: { contents: write }
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .heartbeat
+          git config user.name "wallboard-bot"
+          git config user.email "wallboard-bot@users.noreply.github.com"
+          git add .heartbeat
+          git commit -m "keepalive" || exit 0
+          git push

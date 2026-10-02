@@ -1,0 +1,232 @@
+import datetime as dt, io, json, urllib.error
+import common, live, nightly
+import otif_extract as ox, response_time_extract as rx, credit_notes_extract as cx
+
+TODAY = dt.date(2026, 10, 2)
+
+def O(oid, num, cust, state, start, locked="0", name="", deadline=None):
+    return {"order_id": oid, "number": num, "customer_id": cust, "state": state, "locked": locked,
+            "start_date": f"{start} 07:00:00", "deadline_date": f"{deadline or start} 15:00:00",
+            "name": name or f"PO-{num}", "delete_dt": None}
+
+# real open orders (2 Oct 2026)
+ORDERS = [
+    O("1", "1022154", "3023", "Ready to be shipped", "2026-08-25"),          # overdue 38 d
+    O("2", "1022190", "3018", "Partially ready for warehouse", "2026-09-04"),
+    O("3", "1022319", "1293", "Ready for warehouse", "2026-10-05"),
+    O("4", "1022352", "1692", "Pakning", "2026-10-02"),                        # -> Not ready
+    O("5", "1022357", "1692", "Pakning", "2026-10-23"),                        # beyond 14 d
+    O("6", "1014480", "1155", "-- ingen --", "2025-01-03"),                     # stale
+    O("7", "1022752", "1467", "Shipped", "2026-09-30"),                        # shipped not closed
+    O("8", "1022885", "1419", "Shipped", "2026-07-15"),                        # shipped > 2 months ago
+    O("9", "1022832", "2", "Ready for warehouse", "2026-10-02"),               # internal samples
+    O("10", "1022811", "2008", "Not ready for warehouse", "2026-10-12", name="PO-TRC-20260921-NEOW", deadline="2026-10-14"),
+    O("11", "1022422", "1308", "Ready for warehouse", "2026-10-07"),
+    O("12", "1020354", "1364", "Pakning", "2026-10-03"),                       # intercompany GmbH
+]
+NAMES = {"3023": "Euro Sun Goods", "3018": "CLG", "1293": "Out of Home AB", "1692": "EUROBRANDS",
+         "1155": "Old", "1467": "Premium Brands", "1419": "Healthy Vitafood", "2008": "Humble Group USA",
+         "1308": "Real Food Distributors"}
+VALUES = {"1022811": 704877.5, "1022422": 450000.0, "1022319": 80000.0, "1022357": 300000.0, "1022352": 1000.0}
+GENOBJ = {"10": [{"unit_order_count_f": "0", "unit_order_reserved_f": "11520"}],
+          "11": [{"unit_order_count_f": "3000", "unit_order_reserved_f": "1000"}],
+          "3": [{"unit_order_count_f": "100", "unit_order_reserved_f": "0"}],
+          "5": [], "4": [{"unit_order_count_f": "10", "unit_order_reserved_f": "30"}]}
+
+class FakeTL:
+    def __init__(self): self.genobj_calls = 0
+    def list_orders(self, f): return [dict(o) for o in ORDERS]
+    def module(self, m, oid): self.genobj_calls += 1; return GENOBJ.get(oid, [])
+
+class FakeEcon:
+    def _get(self, url):
+        if "/customers" in url:
+            return {"collection": [{"customerNumber": int(k), "name": v} for k, v in NAMES.items()]}
+        if "/orders/drafts" in url:
+            return {"collection": [{"orderNumber": int(k), "netAmountInBaseCurrency": v} for k, v in VALUES.items()]}
+        return {"collection": []}
+
+class FakeDachser:
+    status = "ok"
+    def booked(self, n): return "booked" if n == "1022422" else "not booked"
+
+def test_column_mapping():
+    assert live.column_of("Pakning") == live.NOT_READY and live.column_of("-- none --") == live.NOT_READY
+    assert live.column_of("Shipped") == "Shipped - not closed" and live.column_of("Weird") is None
+
+def test_status_board_rules():
+    open_o = [o for o in ORDERS if o["customer_id"] not in common.INTERNAL_CUSTOMERS]
+    b = {c["status"]: [x["order"] for x in c["orders"]] for c in live.build_status_board(open_o, NAMES, TODAY)}
+    assert b["Ready to be shipped"] == ["1022154"]                     # overdue kept
+    assert b["Partially ready for warehouse"] == ["1022190"]
+    assert b[live.NOT_READY] == ["1022352", "1022811"]                 # Pakning folded, stale + far-future out
+    assert b["Ready for warehouse"] == ["1022319", "1022422"]
+    assert b["Shipped - not closed"] == ["1022752"]                    # July start dropped
+    flat = [x for c in live.build_status_board(open_o, NAMES, TODAY) for x in c["orders"]]
+    assert [x["overdue"] for x in flat if x["order"] == "1022154"] == [True]
+    assert [x["po"] for x in flat if x["order"] == "1022811"] == ["PO-TRC-20260921-NEOW"]
+
+def test_biggest_orders():
+    open_o = [o for o in ORDERS if o["customer_id"] not in common.INTERNAL_CUSTOMERS]
+    tl = FakeTL()
+    rows = live.build_biggest(open_o, NAMES, {k: v for k, v in VALUES.items()}, lambda i: tl.module("genobj", i),
+                              FakeDachser(), TODAY)
+    assert [r["order"] for r in rows] == ["1022811", "1022422", "1022357", "1022319", "1022352"]
+    r = {x["order"]: x for x in rows}
+    assert r["1022811"]["pick_rate_pct"] == 0.0 and r["1022422"]["pick_rate_pct"] == 75.0
+    assert r["1022422"]["transport"] == "booked" and r["1022811"]["transport"] == "not booked"
+    assert r["1022357"]["pick_rate_pct"] is None and r["1022352"]["status"] == live.NOT_READY
+    assert r["1022811"]["po"] == "PO-TRC-20260921-NEOW" and r["1022811"]["delivery"] == "2026-10-14"
+
+def test_due_not_ready():
+    open_o = [o for o in ORDERS if o["customer_id"] not in common.INTERNAL_CUSTOMERS]
+    due = live.build_due_not_ready(open_o, NAMES, TODAY)
+    assert [x["order"] for x in due] == ["1022190", "1022352"] and due[0]["overdue"]
+
+def test_emails():
+    rows = [{"in_kpi": True, "answered": False, "business_hours": 20, "customer": "a@x.dk", "customer_domain": "x.dk",
+             "subject": "PO 1", "received_local": "2026-09-30 09:00"},
+            {"in_kpi": True, "answered": False, "business_hours": 4, "customer": "b@y.dk", "customer_domain": "y.dk",
+             "subject": "PO 2", "received_local": "2026-10-02 08:00"},
+            {"in_kpi": True, "answered": True, "business_hours": 50, "customer": "c@z.dk", "customer_domain": "z.dk",
+             "subject": "PO 3", "received_local": "2026-09-20 08:00"}]
+    rows[0].update(owner="Andreas", owner_customer="Siradis")
+    e = live.build_emails(rows)
+    assert len(e) == 1 and e[0]["waiting_days"] == 2.5
+    assert e[0]["owner"] == "Andreas" and e[0]["company"] == "Siradis"
+    rows[0].update(owner="", owner_customer="")
+    assert live.build_emails(rows)[0]["owner"] == "Unassigned" and live.build_emails(rows)[0]["company"] == "x.dk"
+
+def test_dachser_status_codes(monkeypatch=None):
+    calls = []
+    def fake_open(req, timeout=30):
+        calls.append(req.full_url)
+        raise urllib.error.HTTPError(req.full_url, 401, "x", {}, io.BytesIO(b""))
+    orig = live.urllib.request.urlopen
+    live.urllib.request.urlopen = fake_open
+    try:
+        dc = live.Dachser()
+        assert dc.booked("1") == "unknown" and dc.status == "not subscribed"
+        assert dc.booked("2") == "unknown" and len(calls) == 1          # stops calling after 401
+    finally:
+        live.urllib.request.urlopen = orig
+    def ok_open(req, timeout=30):
+        class R:
+            def __enter__(s): return s
+            def __exit__(s, *a): pass
+            def read(s): return json.dumps({"shipments": [{"id": 1}]}).encode()
+        return R()
+    live.urllib.request.urlopen = ok_open
+    live.time.sleep = lambda s: None
+    try:
+        assert live.Dachser().booked("1022422") == "booked"
+    finally:
+        live.urllib.request.urlopen = orig
+
+def test_live_main_end_to_end():
+    store = {}
+    common.redis_set = lambda k, v: store.__setitem__(k, json.loads(json.dumps(v, default=str)))
+    common.redis_get = lambda k: store.get(k)
+    orig_run = rx.run
+    rx.run = lambda g: ([], [])
+    try:
+        payload, health = live.main(tl=FakeTL(), econ=FakeEcon(), graph=object(), dachser=FakeDachser(), today=TODAY)
+    finally:
+        rx.run = orig_run
+    assert health["ok"], health
+    assert "lk:live" in store and "lk:health:live" in store
+    orders = [x["order"] for c in store["lk:live"]["status_board"] for x in c["orders"]]
+    assert "1022832" not in orders and "1020354" not in orders           # internal excluded
+    assert store["lk:live"]["biggest"][0]["customer"] == "Humble Group USA"
+
+def test_live_failure_keeps_previous_section():
+    store = {"lk:live": {"emails_waiting": [{"customer": "old"}]}}
+    common.redis_set = lambda k, v: store.__setitem__(k, json.loads(json.dumps(v, default=str)))
+    common.redis_get = lambda k: store.get(k)
+    def boom(g): raise RuntimeError("Graph 403")
+    orig_run = rx.run; rx.run = boom
+    try:
+        payload, health = live.main(tl=FakeTL(), econ=FakeEcon(), graph=object(), dachser=FakeDachser(), today=TODAY)
+    finally:
+        rx.run = orig_run
+    assert not health["ok"] and health["errors"][0]["section"] == "emails"
+    assert store["lk:live"]["emails_waiting"] == [{"customer": "old"}]
+    assert "emails_waiting" in store["lk:live"]["stale_sections"]
+
+def _ord(cust, req, on_time, in_full, ou=10, fu=10, late=0, note=1, name="", num="1"):
+    return {"customer": cust, "requested_date": req, "on_time": on_time, "otif": on_time is True and in_full,
+            "in_full": in_full, "state": "Shipped", "on_time_basis": "shipped, date kept",
+            "ordered_units": ou, "filled_units": fu, "short_value_dkk": 0,
+            "delivery_notes": note, "last_dispatch": req if note else None,
+            "dispatch_vs_plan_days": late if note else None, "name": name, "order_number": num}
+
+def test_nightly_payload_builders():
+    orders = ([_ord("Big", TODAY - dt.timedelta(days=i), True, i % 4 != 0) for i in range(12)]
+              + [_ord("Mid", TODAY - dt.timedelta(days=i), i % 2 == 0, True) for i in range(6)]
+              + [_ord("Small", TODAY, False, False, 10, 5) for _ in range(3)])
+    otif = nightly.otif_payload(orders)
+    assert otif["headline"]["orders"] == 21 and otif["headline"]["on_time_pct"] == round(100 * 15 / 21, 1)
+    disp = nightly.dispatch_payload([_ord("A", TODAY - dt.timedelta(days=9), True, True, late=0),
+                                     _ord("A", TODAY - dt.timedelta(days=9), True, True, late=2),
+                                     _ord("A", TODAY - dt.timedelta(days=9), True, True, late=-1),
+                                     _ord("A", TODAY - dt.timedelta(days=9), True, True, note=0)], TODAY)
+    assert disp["on_plan_pct"] == 66.7 and disp["measured"] == 3 and disp["no_delivery_note_pct"] == 25.0
+    assert disp["weekly"][-1]["week"] == "2026-W39" and disp["weekly"][-1]["pct"] == 66.7
+    c = nightly.customers_payload(orders)
+    assert [x["customer"] for x in c["best"]][0] == "Big" and c["worst"][0]["customer"] == "Small"
+    assert c["order_fill_rate_pct"] == round(100 * 195 / 210, 1)
+
+def test_nightly_main_with_fakes():
+    store = {}
+    common.redis_set = lambda k, v: store.__setitem__(k, json.loads(json.dumps(v, default=str)))
+    common.redis_get = lambda k: store.get(k)
+    o_run, r_run, c_run = ox.run, rx.run, cx.run
+    ox.run = lambda tl, today=None: ([_ord("A", TODAY, True, True, name="4500067621", num="1022593")], [], [])
+    rx.run = lambda g: ([{"in_kpi": True, "answered": True, "business_hours": 3, "received_local": "2026-09-21 09:00", "subject": "PO 1",
+                          "without_order_copy": False, "replied_by": "order@truecompany.com"},
+                         {"in_kpi": True, "answered": False, "business_hours": 30, "received_local": "2026-09-22 09:00",
+                          "subject": "Purchase order 4500067621"},
+                         {"in_kpi": True, "answered": False, "business_hours": 30, "received_local": "2026-09-23 09:00",
+                          "subject": "Request for samples"}], [])
+    cx.run = lambda e, today=None: ([], [{"period": "2026-W40", "invoices": 10, "credits": 2, "credit_pct_count": 20.0}],
+                                    [{"internal": False, "over_credited": True, "credit_note": 1, "customer": "X",
+                                      "date": "2026-09-30", "amount_dkk": -100.0, "reverses_invoice": 5}])
+    try:
+        payload, health = nightly.main(tl=1, graph=1, econ=1, today=TODAY)
+    finally:
+        ox.run, rx.run, cx.run = o_run, r_run, c_run
+    assert health["ok"], health
+    k = store["lk:kpi"]
+    assert k["otif"]["headline"]["otif_pct"] == 100.0
+    r = k["response"]
+    assert r["headline"]["within_1_day_pct"] == 33.3 and r["bands"][-1] == "no reply"
+    assert r["no_reply"] == {"count": 2, "order_in_tracelink": 1, "order_in_tracelink_pct": 50.0}
+    assert r["trend"][-1] == {"week": "2026-W39", "pct": 33.3, "waits": 3}
+    assert r["last4"]["no reply"] == 66.7 and r["last4"]["waits"] == 3
+    assert "dispatch" in k and "shorts" not in k
+    assert r["outside_copy"] == {"count": 0, "answered": 1, "pct": 0.0, "by_person": []}
+    assert k["credit"]["headline"]["credit_pct"] == 20.0 and k["credit"]["to_check"][0]["reason"] == "credited more than invoiced"
+    assert k["credit"]["weekly"] == []                                   # W40 is the running week
+
+def test_complete_weeks_and_credit_dedupe():
+    rows = [{"week": f"2026-W{w:02d}"} for w in range(20, 41)]
+    out = nightly.complete_weeks(rows, TODAY)
+    assert out[-1]["week"] == "2026-W39" and len(out) == 13
+    cn = [{"internal": False, "over_credited": True, "credit_note": n, "customer": "EUROBRANDS", "date": d,
+           "amount_dkk": -277000.0, "reverses_invoice": "20131"} for n, d in ((20517, "2026-08-10"), (20550, "2026-09-10"))]
+    c = nightly.credit_payload([], cn)
+    assert len(c["to_check"]) == 1 and c["to_check"][0]["amount_dkk"] == -554000.0
+    assert c["to_check"][0]["reason"] == "credited 2 times" and c["to_check"][0]["date"] == "2026-09-10"
+
+def test_cph_now_is_naive_local():
+    n = common.cph_now()
+    assert n.tzinfo is None
+
+if __name__ == "__main__":
+    import sys, traceback
+    fails = 0
+    for n, f in list(globals().items()):
+        if n.startswith("test_"):
+            try: f(); print("PASS", n)
+            except Exception as e: fails += 1; print("FAIL", n, repr(e)); traceback.print_exc()
+    sys.exit(fails)

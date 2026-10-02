@@ -1,0 +1,40 @@
+name: nightly-kpis
+on:
+  schedule:
+    - cron: "15 1 * * *"          # 03:15 Copenhagen summer / 02:15 winter, every day
+  workflow_dispatch: {}
+concurrency: { group: nightly, cancel-in-progress: false }
+jobs:
+  kpis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults: { run: { working-directory: jobs } }
+    env:
+      TRACELINK_TOKEN: ${{ secrets.TRACELINK_TOKEN }}
+      TENANT_ID: ${{ secrets.TENANT_ID }}
+      CLIENT_ID: ${{ secrets.CLIENT_ID }}
+      CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+      APP_SECRET_TOKEN: ${{ secrets.APP_SECRET_TOKEN }}
+      AGREEMENT_GRANT_TOKEN: ${{ secrets.AGREEMENT_GRANT_TOKEN }}
+      KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
+      KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
+      GRAPH_SECRET_EXPIRES: ${{ vars.GRAPH_SECRET_EXPIRES }}
+      OTIF_CACHE_DIR: otif_cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Restore TraceLink cache (closed orders never change)
+        uses: actions/cache@v4
+        with:
+          path: jobs/otif_cache
+          key: otif-cache-${{ github.run_id }}
+          restore-keys: otif-cache-
+      - name: Tests
+        run: |
+          KV_REST_API_URL= python test_otif.py
+          KV_REST_API_URL= python test_response.py
+          KV_REST_API_URL= python test_credit.py
+          KV_REST_API_URL= python test_jobs.py
+      - name: Build KPIs and publish
+        run: python nightly.py
