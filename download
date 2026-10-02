@@ -1,0 +1,7 @@
+node_modules
+.next
+jobs/__pycache__
+jobs/otif_cache
+jobs/*_output
+*.pyc
+.env*
