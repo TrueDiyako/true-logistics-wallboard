@@ -1,12 +1,13 @@
 import React from "react";
 
-const W = 1000, H = 420, L = 70, R = 30, T = 20, B = 50;
+const W = 1000, H0 = 420, L = 70, R = 30, T = 20, B = 50;
 
 const weekLabel = (w: string) => (w.includes("-W") ? "W" + w.split("-W")[1] : w);
 
 export type Series = { name: string; values: (number | null)[]; color: string; width?: number };
 
-export function LineChart({ labels, series }: { labels: string[]; series: Series[] }) {
+export function LineChart({ labels, series, height = H0 }: { labels: string[]; series: Series[]; height?: number }) {
+  const H = height;
   const n = Math.max(labels.length, 1);
   const x = (i: number) => L + (n === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (n - 1));
   const y = (v: number) => T + (1 - v / 100) * (H - T - B);
@@ -52,6 +53,7 @@ export function LineChart({ labels, series }: { labels: string[]; series: Series
 export type Band = { key: string; label: string; color: string };
 
 export function StackedBars({ weeks, bands }: { weeks: Record<string, any>[]; bands: Band[] }) {
+  const H = H0;
   const n = Math.max(weeks.length, 1);
   const slot = (W - L - R) / n;
   const bw = slot * 0.68;

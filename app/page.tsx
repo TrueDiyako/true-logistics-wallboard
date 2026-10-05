@@ -51,6 +51,18 @@ export default function Wallboard() {
     return () => { clearInterval(a); clearInterval(b); clearTimeout(c); };
   }, []);
 
+  // manual navigation: arrow keys (also most TV remotes) or click a dot
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight" || e.key === "PageDown") setIdx((i) => (i + 1) % DASHBOARDS.length);
+      if (e.key === "ArrowLeft" || e.key === "PageUp") setIdx((i) => (i - 1 + DASHBOARDS.length) % DASHBOARDS.length);
+      const n = Number(e.key);
+      if (n >= 1 && n <= DASHBOARDS.length) setIdx(n - 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   useEffect(() => {
     if (pinned.current !== null) return;
     const t = setTimeout(() => setIdx((i) => (i + 1) % DASHBOARDS.length), DASHBOARDS[idx].seconds * 1000);
@@ -65,7 +77,7 @@ export default function Wallboard() {
     <main className="wall">
       <header>
         <div className="title">Logistics · {dash.title}</div>
-        <div className="dots">{DASHBOARDS.map((d, i) => <i key={d.id} className={i === idx ? "on" : ""} />)}</div>
+        <div className="dots">{DASHBOARDS.map((d, i) => <i key={d.id} title={d.title} className={i === idx ? "on" : ""} onClick={() => setIdx(i)} />)}</div>
         <div className="meta">
           {updated && <>updated {new Date(updated).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} · </>}
           {now.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}{" "}

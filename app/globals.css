@@ -6,7 +6,7 @@
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; background: var(--bg); color: var(--ink); overflow: hidden;
-  font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 1.15vw; }
+  font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: min(1.15vw, 2.04vh); }
 .wall { height: 100vh; display: flex; flex-direction: column; padding: 1.2vh 1.2vw; gap: 1vh; }
 header { display: flex; align-items: center; gap: 2vw; }
 header .title { font-size: 1.9rem; font-weight: 600; flex: 1; }
@@ -70,3 +70,7 @@ header .meta { font-size: 1.1rem; color: var(--muted); }
 .owner { width: 6.2vw; flex: none; color: var(--muted); font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .outside { margin-top: .5vh; font-size: .95rem; color: var(--warn); }
 .outside b { font-weight: 700; }
+.splitrow { display: flex; justify-content: space-between; align-items: center; gap: 1vw; flex-wrap: wrap; }
+.notes { display: flex; flex-direction: column; gap: .2rem; margin-top: .4rem; font-size: .9rem; color: var(--overdue-ink); }
+.notes b { font-weight: 700; }
+.dots i { cursor: pointer; }

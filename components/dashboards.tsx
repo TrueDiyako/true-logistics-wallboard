@@ -95,33 +95,24 @@ const responsePanel: PanelFn = ({ kpi }) => {
   const r = kpi?.response;
   if (!r) return <Panel title="Response time"><Missing /></Panel>;
   const t = r.trend || [];
-  const nr = r.no_reply;
+  const nr = r.no_reply, oc = r.outside_copy;
   return (
     <Panel title="Response time" note="first reply to new customer emails · business days">
-      <div className="resptop">
-        <div className="respheads">
-          <Headlines items={[{ label: "answered within 1 day", value: pct(r.headline.within_1_day_pct), color: C.reply }]} />
-          <Headlines items={[{ label: "no reply found", value: pct(r.headline.no_reply_pct), color: C.noReply }]} />
-        </div>
-        <div className="resptrend">
-          <span className="splitlabel">Answered within 1 day, per week</span>
-          <LineChart labels={t.map((x: any) => x.week)} series={[{ name: "Within 1 day", values: t.map((x: any) => x.pct), color: C.reply, width: 7 }]} />
-        </div>
-      </div>
+      <Headlines items={[
+        { label: "answered within 1 day", value: pct(r.headline.within_1_day_pct), color: C.reply },
+        { label: "no reply found", value: pct(r.headline.no_reply_pct), color: C.noReply },
+      ]} />
+      <LineChart labels={t.map((x: any) => x.week)} series={[{ name: "Within 1 day", values: t.map((x: any) => x.pct), color: C.reply, width: 7 }]} height={250} />
       {r.last4 && (
         <div className="split">
-          <span className="splitlabel">Last 4 weeks · {r.last4.waits} emails</span>
-          <HBar parts={BANDS.map((b) => ({ label: b.label, value: r.last4[b.key], color: b.color, ink: b.ink }))} />
-          <Legend items={BANDS} />
+          <HBar height={34} parts={BANDS.map((b) => ({ label: b.label, value: r.last4[b.key], color: b.color, ink: b.ink }))} />
+          <div className="splitrow"><span className="splitlabel">Last 4 weeks · {r.last4.waits} emails</span><Legend items={BANDS} /></div>
         </div>
       )}
-      {r.outside_copy && r.outside_copy.count > 0 && (
-        <div className="outside">Answered without order@ in copy: <b>{pct(r.outside_copy.pct)}</b>
-          {" · "}{(r.outside_copy.by_person || []).slice(0, 4).map((p: any) => `${p[0]} ${p[1]}`).join(" · ")}</div>
-      )}
-      {nr && nr.count > 0 && (
-        <div className="callout">{pct(nr.order_in_tracelink_pct)} of the no-reply emails were orders already entered in TraceLink: processed, never confirmed.</div>
-      )}
+      <div className="notes">
+        {nr && nr.count > 0 && <span>No reply: <b>{pct(nr.order_in_tracelink_pct)}</b> were orders already in TraceLink (never confirmed)</span>}
+        {oc && oc.count > 0 && <span>Answered without order@ in copy: <b>{pct(oc.pct)}</b> · {(oc.by_person || []).slice(0, 4).map((p: any) => `${p[0]} ${p[1]}`).join(" · ")}</span>}
+      </div>
     </Panel>
   );
 };
