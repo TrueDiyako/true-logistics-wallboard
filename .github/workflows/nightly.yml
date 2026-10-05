@@ -30,11 +30,13 @@ jobs:
           path: jobs/otif_cache
           key: otif-cache-${{ github.run_id }}
           restore-keys: otif-cache-
+      - run: pip install openpyxl==3.1.5
       - name: Tests
         run: |
           KV_REST_API_URL= python test_otif.py
           KV_REST_API_URL= python test_response.py
           KV_REST_API_URL= python test_credit.py
           KV_REST_API_URL= python test_jobs.py
+          KV_REST_API_URL= python test_production.py
       - name: Build KPIs and publish
         run: python nightly.py

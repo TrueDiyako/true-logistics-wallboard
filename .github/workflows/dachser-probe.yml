@@ -1,0 +1,26 @@
+name: dachser-probe
+# Manual, read-only: which reference (order number / customer PO) finds our
+# shipments in Dachser Track & Trace. Download the CSV from the run's Artifacts.
+on:
+  workflow_dispatch: {}
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults: { run: { working-directory: jobs } }
+    env:
+      TRACELINK_TOKEN: ${{ secrets.TRACELINK_TOKEN }}
+      DACHSER_API_KEY: ${{ secrets.DACHSER_API_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: "3.12" }
+      - run: python dachser_probe.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dachser-probe
+          path: |
+            jobs/dachser_probe.csv
+            jobs/dachser_probe_raw.json
+          if-no-files-found: ignore

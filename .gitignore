@@ -5,3 +5,5 @@ jobs/otif_cache
 jobs/*_output
 *.pyc
 .env*
+jobs/dachser_*.csv
+jobs/dachser_*.json

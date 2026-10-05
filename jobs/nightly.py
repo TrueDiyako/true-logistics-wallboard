@@ -3,7 +3,7 @@ nightly.py - KPI history for dashboards 1 and 2 (runs once a night).
 
 Writes Redis key lk:kpi:
   otif      weekly OTIF / on-time / in-full %, 13-week headlines
-  dispatch  weekly % of shipments dispatched on or before the planned date
+  shorts    weekly average % of an order's volume short-picked, % orders with a short line
   response  within-1-day trend, last-4-weeks answer bands, no-reply root cause
   credit    weekly % of invoices credited, headline, credits to check
   customers order fill rate + best/worst 10 OTIF among the busiest customers
@@ -57,24 +57,24 @@ def otif_payload(orders, today=None):
                        for w in weekly]}
 
 
-def dispatch_payload(orders, today=None):
-    """Dispatched on plan = delivery note created on/before TraceLink start date.
-    Only shipments with a delivery note can be measured; the rest is reported."""
-    shipped = [o for o in orders if o["state"] == "Shipped"]
-    noted = [o for o in shipped if o.get("delivery_notes") and o.get("last_dispatch")
-             and o.get("dispatch_vs_plan_days") is not None]
+def shorts_payload(orders, today=None):
+    """Short picks by volume: for each shipped order, the share of its ordered cases not
+    picked (judged per flavour, swaps and bag/case differences already handled); the
+    weekly line is the average over that week's orders."""
+    shipped = [o for o in orders if ox._filled_base(o) and o["ordered_units"] > 0]
+
+    def short_pct(o):
+        return 100 * (1 - min(o["filled_units"], o["ordered_units"]) / o["ordered_units"])
     wk = {}
-    for o in noted:
-        a = wk.setdefault(iso_week(o["last_dispatch"]), [0, 0])
-        a[0] += 1
-        a[1] += o["dispatch_vs_plan_days"] <= 0
-    weekly = [{"week": k, "pct": pct(v[1], v[0]), "shipments": v[0]} for k, v in sorted(wk.items())]
+    for o in shipped:
+        w = iso_week(o.get("last_dispatch") or o["requested_date"])
+        wk.setdefault(w, []).append(short_pct(o))
+    weekly = [{"week": k, "pct": round(sum(v) / len(v), 1), "orders": len(v)} for k, v in sorted(wk.items())]
     if today:
         weekly = complete_weeks(weekly, today)
-    return {"on_plan_pct": pct(sum(o["dispatch_vs_plan_days"] <= 0 for o in noted), len(noted)),
-            "measured": len(noted),
-            "no_delivery_note_pct": pct(len(shipped) - len(noted), len(shipped)),
-            "weekly": weekly}
+    return {"avg_short_pct": round(sum(map(short_pct, shipped)) / len(shipped), 1) if shipped else None,
+            "orders_with_short_pct": pct(sum(1 for o in shipped if short_pct(o) > 0), len(shipped)),
+            "orders": len(shipped), "weekly": weekly}
 
 
 def customers_payload(orders):
@@ -166,7 +166,7 @@ def main(tl=None, graph=None, econ=None, today=None):
         ox.CACHE_DIR = os.environ.get("OTIF_CACHE_DIR", os.path.join(work, "otif_cache"))
         orders, _, _ = ox.run(tl or ox.TraceLink(), today=today)
         payload["otif"] = otif_payload(orders, today)
-        payload["dispatch"] = dispatch_payload(orders, today)
+        payload["shorts"] = shorts_payload(orders, today)
         payload["customers"] = customers_payload(orders)
         for o in orders:                            # order refs to explain "no reply"
             refs.update(re.findall(r"\d{4,}", str(o.get("name", ""))))
@@ -188,7 +188,7 @@ def main(tl=None, graph=None, econ=None, today=None):
     h.section("otif", otif)
     h.section("response", response)
     h.section("credit", credit)
-    common.keep_previous(payload, "lk:kpi", ["otif", "dispatch", "customers", "response", "credit"])
+    common.keep_previous(payload, "lk:kpi", ["otif", "shorts", "customers", "response", "credit"])
     common.redis_set("lk:kpi", payload)
     return payload, h.publish({"graph_secret_expires": os.environ.get("GRAPH_SECRET_EXPIRES", "")})
 

@@ -17,6 +17,8 @@ const BANDS = [
 
 const pct = (v: any) => (v == null ? "–" : `${Math.round(Number(v))}%`);
 const dkk = (v: any) => (v == null ? "–" : `${Math.round(Number(v) / 1000).toLocaleString("da-DK")}k`);
+const money = (v: any) => (v == null ? "–" : Math.abs(Number(v)) >= 1e6
+  ? `${(Number(v) / 1e6).toLocaleString("en-GB", { maximumFractionDigits: 1 })}M` : dkk(v));
 const day = (s: string) => {
   const d = new Date(s + "T12:00:00");
   return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
@@ -76,17 +78,17 @@ const otifPanel: PanelFn = ({ kpi }) => {
   );
 };
 
-const dispatchPanel: PanelFn = ({ kpi }) => {
-  const s = kpi?.dispatch;
-  if (!s) return <Panel title="Dispatched on planned date"><Missing /></Panel>;
+const shortsPanel: PanelFn = ({ kpi }) => {
+  const s = kpi?.shorts;
+  if (!s) return <Panel title="Short picks"><Missing /></Panel>;
   const w = s.weekly || [];
   return (
-    <Panel title="Dispatched on planned date" note="delivery note on or before the TraceLink start date">
+    <Panel title="Short picks" note="average % of each order's volume not picked · per week">
       <Headlines items={[
-        { label: `of ${s.measured} shipments, 13 weeks`, value: pct(s.on_plan_pct), color: C.dispatch },
-        { label: "shipped without delivery note", value: pct(s.no_delivery_note_pct), color: C.inFull },
+        { label: "of an order's volume short, on average", value: pct(s.avg_short_pct), color: C.credit },
+        { label: "of orders have at least one short line", value: pct(s.orders_with_short_pct), color: C.inFull },
       ]} />
-      <LineChart labels={w.map((x: any) => x.week)} series={[{ name: "On plan", values: w.map((x: any) => x.pct), color: C.dispatch, width: 7 }]} />
+      <LineChart labels={w.map((x: any) => x.week)} series={[{ name: "Short", values: w.map((x: any) => x.pct), color: C.credit, width: 7 }]} />
     </Panel>
   );
 };
@@ -143,19 +145,31 @@ const emailsPanel: PanelFn = ({ live }) => {
       <List rows={rows} max={18} empty="No customer is waiting"
             render={(r) => (<><span className="owner">{r.owner || "Unassigned"}</span>
                               <span className="grow"><b>{r.company}</b> · {r.subject}</span>
-                              <span className="bad">{r.waiting_days} d</span></>)} />
+                              <span className="bad">{Math.round(r.waiting_days)} d</span></>)} />
     </Panel>
   );
 };
 
-const duePanel: PanelFn = ({ live }) => (
-  <Panel title="Due in 3 days, not ready" note={live?.due_not_ready ? `${live.due_not_ready.length} orders` : ""}>
-    {!live?.due_not_ready ? <Missing /> :
-      <List rows={live.due_not_ready} max={7} empty="Everything due is ready"
+const duePanel: PanelFn = ({ live }) => {
+  const rows = live?.due_not_ready;
+  if (!rows) return <Panel title="Due in 3 days, not ready"><Missing /></Panel>;
+  const today = new Date().toISOString().slice(0, 10);
+  const over = rows.filter((r: any) => r.overdue).length;
+  const todayN = rows.filter((r: any) => !r.overdue && r.start === today).length;
+  const sorted = [...rows].sort((a: any, b: any) => (b.days_late || 0) - (a.days_late || 0) || (a.start < b.start ? -1 : 1));
+  return (
+    <Panel title="Due in 3 days, not ready" note="oldest first">
+      <div className="chips"><span className="chip bad">Overdue <b>{over}</b></span>
+        <span className="chip">Due today <b>{todayN}</b></span>
+        <span className="chip">Next 3 days <b>{rows.length - over - todayN}</b></span></div>
+      <List rows={sorted} max={9} empty="Everything due is ready"
             render={(r) => (<><span className="grow">{r.customer} · {r.order}{r.po ? ` · ${r.po}` : ""}</span>
-                              <span className={r.overdue ? "bad" : "warn"}>{r.overdue ? "overdue" : day(r.start)}</span></>)} />}
-  </Panel>
-);
+                              <span className="muted2">{r.status === "Partially ready for warehouse" ? "Partially ready" : "Not ready"}</span>
+                              {r.overdue ? <span className="bad">{r.days_late} d late</span>
+                                         : <span className="warn">{r.start === today ? "today" : day(r.start)}</span>}</>)} />
+    </Panel>
+  );
+};
 
 const creditsCheckPanel: PanelFn = ({ kpi }) => (
   <Panel title="Credits to check">
@@ -194,10 +208,10 @@ const statusBoard: PanelFn = ({ live }) => {
     <Panel title="Open orders by status" note="start date within 2 weeks · overdue in red · shipped: last 2 months">
       <div className="board">
         {b.map((col: any) => (
-          <div className="boardcol" key={col.status}>
+          <div className={"boardcol" + (col.status === "Shipped - not closed" ? " shippedcol" : "")} key={col.status}>
             <h3>{col.status} <span>{col.orders.length}</span></h3>
             {col.orders.slice(0, 14).map((o: any, i: number) => (
-              <div className={"card" + (o.overdue ? " overdue" : "")} key={i}>
+              <div className={"card" + (o.overdue ? " overdue" : "") + (col.status === "Shipped - not closed" ? " shipped" : "")} key={i}>
                 <div className="cardtop"><span className="grow">{o.customer}</span><span>{o.order}</span></div>
                 <div className="cardpo">{o.po || "–"}</div>
               </div>
@@ -211,29 +225,94 @@ const statusBoard: PanelFn = ({ live }) => {
 };
 
 // ---------------- dashboard 4: biggest open orders ----------------
+const TRANSPORT: Record<string, [string, string]> = {
+  "delivered": ["Delivered", "good"], "in transit": ["In transit", "good"], "booked": ["Booked", "good"],
+  "not booked": ["Not booked", ""], "unknown": ["Unknown", ""],
+};
+
 const biggest: PanelFn = ({ live }) => {
   const rows = live?.biggest;
   if (!rows) return <Panel title="Biggest open orders"><Missing /></Panel>;
-  const t = live.dachser_tracking === "not subscribed" ? " · transport unknown: Dachser tracking not enabled" : "";
+  const s = live.biggest_summary;
+  const note = live.dachser_tracking === "not subscribed" || live.dachser_tracking === "no key"
+    ? " · transport unknown: Dachser tracking not enabled" : "";
   return (
-    <Panel title="Biggest open orders by revenue" note={"start date today or later" + t}>
-      <table className="table">
-        <thead><tr><th>Customer</th><th>Order</th><th>Start</th><th>Delivery</th><th className="num">Revenue DKK</th>
-          <th className="num">Picked</th><th>Transport</th><th>Status</th></tr></thead>
-        <tbody>
-          {rows.map((r: any, i: number) => (
-            <tr key={i}>
-              <td>{r.customer}</td><td>{r.order}</td><td>{day(r.start)}</td><td>{r.delivery ? day(r.delivery) : "–"}</td>
-              <td className="num">{dkk(r.revenue_dkk)}</td>
-              <td className="num">{pct(r.pick_rate_pct)}</td>
-              <td className={r.transport === "booked" ? "good" : r.transport === "unknown" ? "" : "bad"}>
-                {r.transport === "booked" ? "Booked" : r.transport === "unknown" ? "Unknown" : "Not booked"}</td>
-              <td>{r.status}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="prodwrap">
+      {s && <div className="callouts">
+        <div className="callout2"><b>{money(s.top_value_dkk)} DKK</b><span>the {s.top_orders} biggest open orders</span></div>
+        <div className="callout2"><b>{pct(s.top_share_pct)}</b><span>of all open order value ({money(s.open_value_dkk)} DKK, {s.open_orders} orders)</span></div>
+        <div className="callout2"><b>{s.booked} of {s.top_orders}</b><span>booked with Dachser</span></div>
+      </div>}
+      <Panel title="Biggest open orders by revenue" note={"start date today or later" + note}>
+        <table className="table">
+          <thead><tr><th>Customer</th><th>Order</th><th>Customer order</th><th>Start</th><th>Delivery</th>
+            <th className="num">Revenue DKK</th><th className="num">Picked</th><th>Status</th><th>Transport</th></tr></thead>
+          <tbody>
+            {rows.map((r: any, i: number) => {
+              const [label, cls] = TRANSPORT[r.transport] || ["Unknown", ""];
+              return (
+                <tr key={i}>
+                  <td>{r.customer}</td><td>{r.order}</td><td className="po">{r.po}</td><td>{day(r.start)}</td>
+                  <td>{r.delivery ? day(r.delivery) : "–"}</td>
+                  <td className="num">{dkk(r.revenue_dkk)}</td><td className="num">{pct(r.pick_rate_pct)}</td>
+                  <td>{r.status}</td>
+                  <td className={r.book_now ? "bad" : cls}>{r.book_now ? "Book now" : label}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Panel>
+    </div>
+  );
+};
+
+// ---------------- dashboard 5: production plan ----------------
+const productionLine = (name: string, p: any) => {
+  const runs = (p.lines || {})[name] || [];
+  return (
+    <Panel title={name}>
+      <div className="ptable" style={{ gridTemplateColumns: `repeat(${p.days.length}, minmax(0, 1fr))` }}>
+        {p.days.map((d: string) => {
+          const today = runs.filter((r: any) => r.day === d);
+          return (
+            <div className="pcol" key={d}>
+              <h3>{new Date(d + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "numeric" })}</h3>
+              {today.length === 0 && <div className="empty small">no production</div>}
+              {today.map((r: any, i: number) => (
+                <div className="run" key={i}>
+                  <div className="runhead"><b>{r.flavour}</b><span className="lang">{r.lang}</span>
+                    <span className="sku">{r.cases.toLocaleString("da-DK")} cs</span></div>
+                  {!r.sku && <div className="al nodata">Unknown article</div>}
+                  {r.alloc.map((a: any, j: number) => (
+                    <div className="al" key={j}><span className="grow">{a.customer}</span>
+                      <span className="q">{a.cases.toLocaleString("da-DK")}{a.cases === a.of ? "" : ` of ${a.of.toLocaleString("da-DK")}`}</span>
+                      <span className="s">{day(a.start)}</span></div>
+                  ))}
+                  {r.more > 0 && <div className="al more2">+ {r.more} more orders</div>}
+                  {r.free > 0 && <div className="al free"><span className="grow">Not yet allocated</span>
+                    <span className="q">{r.free.toLocaleString("da-DK")}</span><span className="s" /></div>}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
     </Panel>
+  );
+};
+
+const productionPlan: PanelFn = ({ live }) => {
+  const p = live?.production;
+  if (!p) return <Panel title="Production plan"><Missing /></Panel>;
+  const mon = new Date(p.monday + "T12:00:00"), fri = new Date(mon.getTime() + 4 * 864e5);
+  const f = (x: Date) => x.toLocaleDateString("en-GB", { day: "numeric", month: "long" });
+  return (
+    <div className="prodwrap">
+      <div className="weekbanner">Week {p.week} · {f(mon)} – {f(fri)} · new production only, cases (bags ÷ 12) allocated to open reservations by start date</div>
+      {productionLine("Laudenberg", p)}
+      {productionLine("Bossar", p)}
+    </div>
   );
 };
 
@@ -243,13 +322,15 @@ export type Dashboard = { id: string; title: string; seconds: number; layout: st
 
 export const DASHBOARDS: Dashboard[] = [
   { id: "performance", title: "How are we doing", seconds: 300,
-    layout: `"otif dispatch" "reply credit"`, columns: "1fr 1fr", rows: "1fr 1fr",
-    panels: { otif: otifPanel, dispatch: dispatchPanel, reply: responsePanel, credit: creditPanel } },
+    layout: `"otif shorts" "reply credit"`, columns: "1fr 1fr", rows: "1fr 1fr",
+    panels: { otif: otifPanel, shorts: shortsPanel, reply: responsePanel, credit: creditPanel } },
   { id: "action", title: "What needs doing now", seconds: 300,
-    layout: `"emails due customers" "emails credits customers"`, columns: "1.25fr 1fr 1.15fr", rows: "1fr 1fr",
+    layout: `"emails due customers" "emails credits customers"`, columns: "1.1fr 1.35fr 0.95fr", rows: "1fr 1fr",
     panels: { emails: emailsPanel, due: duePanel, credits: creditsCheckPanel, customers: customersPanel } },
   { id: "status", title: "Open orders by status", seconds: 300,
     layout: `"board"`, columns: "1fr", rows: "1fr", panels: { board: statusBoard } },
   { id: "biggest", title: "Biggest open orders", seconds: 300,
     layout: `"big"`, columns: "1fr", rows: "1fr", panels: { big: biggest } },
+  { id: "production", title: "Production plan", seconds: 300,
+    layout: `"prod"`, columns: "1fr", rows: "1fr", panels: { prod: productionPlan } },
 ];

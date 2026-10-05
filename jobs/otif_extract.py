@@ -90,6 +90,7 @@ for _k in ('TRACELINK_TOKEN',):
 import csv
 import datetime as dt
 import json
+import re
 import os
 import sys
 import time
@@ -328,8 +329,12 @@ def analyse_order(header, details, today):
             f["ord"] += l["ordered_qty"]
             f["pick"] += l["picked_qty"]
             f["val"] += l["ordered_value_dkk"]
-        tot_fill, val_short, in_full = 0.0, 0.0, True
+        tot_fill, val_short, in_full, bag_fix = 0.0, 0.0, True, 0
         for k, f in fl.items():
+            if f["pick"] > 0 and abs(f["ord"] - BAG_FACTOR * f["pick"]) < 1e-6:
+                tot_ord -= f["ord"] - f["pick"]          # ordered in bags, picked in cases
+                f["ord"] = f["pick"]
+                bag_fix += 1
             ok = (f["pick"] == f["ord"]) if EXACT_QTY_REQUIRED else (f["pick"] >= f["ord"])
             f["ok"] = ok
             in_full &= ok
@@ -381,6 +386,7 @@ def analyse_order(header, details, today):
         "ordered_value_dkk": round(val_ord, 2),
         "short_value_dkk": round(val_short, 2),
         "variant_swap_lines": variant_swaps,
+        "bag_case_fixes": bag_fix if VARIANT_SWAP_OK else 0,
         "short_lines": sum(1 for l in lines if l["deviation"] == "short"),
         "removed_lines": sum(1 for l in lines if l["deviation"] == "removed"),
         "over_lines": sum(1 for l in lines if l["deviation"] == "over"),
@@ -393,6 +399,9 @@ def analyse_order(header, details, today):
 
 
 SPLIT_WINDOW_DAYS = 21
+# Some customers order in bags while the warehouse picks cases (Matas, Heinemann):
+# a flavour ordered at exactly BAG_FACTOR x the picked quantity is a unit difference, not a short.
+BAG_FACTOR = 12
 
 
 def flag_possible_splits(orders, lines):
@@ -519,12 +528,30 @@ def weekly_series(orders):
              "unit_fill_pct": pct(a["fill_u"], a["ord_u"])} for k, a in sorted(wk.items())]
 
 
+_LEGAL = {"a/s", "aps", "as", "ab", "oy", "gmbh", "ltd", "ltd.", "llc", "llc.", "b.v.", "bv", "s.l.", "sl", "srl",
+          "s.r.o.", "kft.", "kft", "d.o.o.", "oü", "sàrl", "sarl", "inc", "inc.", "pty", "co.,", "plc"}
+_GENERIC_FIRST = {"the", "green", "real", "gebr.", "gebr", "dm", "out", "first", "good", "healthy", "premium",
+                  "euro", "true", "new", "big", "camps", "nordic", "c", "a1"}
+
+
+def company_key(name):
+    """One key per company across e-conomic name variants:
+    'HELSAM A/S' / 'Helsam Helsingør' -> helsam, 'Dagrofa ApS' / 'Dagrofa Logistik a/s' -> dagrofa."""
+    toks = [t for t in re.split(r"[\s(),]+", (name or "").lower()) if t and t not in _LEGAL]
+    if not toks:
+        return (name or "").lower()
+    return " ".join(toks[:2]) if toks[0] in _GENERIC_FIRST and len(toks) > 1 else toks[0]
+
+
 def customer_ranking(orders):
     """Per customer: OTIF %, in full %, order fill rate (units). Ranked only
     with at least RANK_MIN_ORDERS orders, so one-order customers don't top the list."""
-    cs = {}
+    cs, names = {}, {}
     for o in orders:
-        a = cs.setdefault(o["customer"], {"orders": 0, "tb": 0, "otif": 0, "fb": 0,
+        key = company_key(o["customer"])
+        names.setdefault(key, {}).setdefault(o["customer"], 0)
+        names[key][o["customer"]] += 1
+        a = cs.setdefault(key, {"orders": 0, "tb": 0, "otif": 0, "fb": 0,
                                           "full": 0, "ou": 0.0, "fu": 0.0, "short_dkk": 0.0})
         a["orders"] += 1
         if o["on_time"] is not None:
@@ -536,7 +563,7 @@ def customer_ranking(orders):
             a["ou"] += o["ordered_units"]
             a["fu"] += o["filled_units"]
             a["short_dkk"] += o["short_value_dkk"]
-    rows = [{"customer": c, "orders": a["orders"],
+    rows = [{"customer": max(names[c].items(), key=lambda x: x[1])[0], "orders": a["orders"],
              "otif_pct": round(100 * a["otif"] / a["tb"], 1) if a["tb"] else None,
              "in_full_pct": round(100 * a["full"] / a["fb"], 1) if a["fb"] else None,
              "order_fill_rate_pct": round(100 * a["fu"] / a["ou"], 1) if a["ou"] else None,

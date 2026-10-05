@@ -4,10 +4,11 @@ A rotating TV wallboard (5 minutes per dashboard) that updates itself:
 
 | # | Dashboard | Data | Refresh |
 |---|-----------|------|---------|
-| 1 | How are we doing: OTIF, dispatched on planned date, response time, credit notes | TraceLink, Outlook (Graph), e-conomic | nightly |
+| 1 | How are we doing: OTIF, short picks, response time, credit notes | TraceLink, Outlook (Graph), e-conomic | nightly |
 | 2 | What needs doing now: waiting emails, due-not-ready, credits to check, best/worst customers | all | hourly (customers/credits nightly) |
 | 3 | Open orders by status | TraceLink + e-conomic names | hourly |
 | 4 | Biggest open orders by revenue | TraceLink, e-conomic, Dachser | hourly |
+| 5 | Production plan: this week on Laudenberg and Bossar, and which orders it covers | Drive plan, TraceLink | hourly |
 
 ```
 GitHub Actions (schedule) --> jobs/*.py --> Upstash Redis --> Vercel page (/api/data) --> TV
@@ -52,9 +53,11 @@ the last good data stays on screen, and GitHub e-mails the repository owner.
   another label counts as in full; private label, other flavours, removed lines are short).
   Internal customers (2, 1128, 1129, 3019, 1364), backorders and cancelled orders are out.
   Filled displays picked as loose packs count as in full.
-- **Dispatched on planned date**: % of shipments whose delivery note was created on or before the
-  TraceLink start date (planned dispatch). Shipments without a delivery note can't be measured and are
-  shown as their own share.
+- **Short picks**: per shipped order, the share of its ordered cases not picked (per flavour; swaps and
+  bag/case differences are not shorts; removed lines are). The line is the weekly average of orders;
+  second headline = % of orders with at least one short line.
+- **OTIF ranking** groups e-conomic name variants per company (HELSAM A/S + Helsam Helsingør). Orders
+  placed in bags (Matas, Heinemann: ordered = 12 x picked) count as in full.
 - **Response time**: first team reply to a new customer email sent to order@/wholesale@, in
   business days (Mon-Fri 08-16). Automated senders, partners (Stiller, carriers), finance and
   QA topics are out. Panel: % answered within 1 business day (headline + weekly trend), the last 4
@@ -68,8 +71,19 @@ the last good data stays on screen, and GitHub e-mails the repository owner.
   shown under "Not ready".
 - **Dashboard 3 cards** show customer, TraceLink order number and the customer's order number
   (the TraceLink order name).
-- **Dashboard 4**: open orders, start date today or later, top 20 by current e-conomic value.
-  Delivery = current TraceLink delivery date.
+- **Dashboard 4**: open orders, start date today or later, top 20 by current e-conomic value, plus their
+  share of all open order value. Delivery = current TraceLink delivery date. Transport = Dachser Track &
+  Trace (shipmenthistory): looked up by TraceLink order number (Glostrup bookings) and customer order
+  (Hannover bookings) with every key: `DACHSER_API_KEY` (Hannover), `DACHSER_API_KEY_DK` (+ `_DK2`, `_DK3`
+  for further Danish logins). States: Not booked / Booked / In transit / Delivered.
+  Red "Book now" when not booked 2 working days before the start date: switch on with the repository
+  variable `BOOKING_WARNING = 1` once all Danish Dachser logins are visible.
+- **Dashboard 5**: plan from "Production plan and Data.xlsx" (Drive, shared by link; comment columns are
+  not read). Bags / 12 = cases. Article = language prefix (60 DE/NL, 62 CZ/SK, 63 EN/DK, 64 AU/NZ,
+  66 US, 67 CA) + flavour code. New production covers open reservations by start date across both lines;
+  current stock is ignored; shipped and internal orders are skipped.
+- **Dachser checks**: `jobs/dachser_probe.py` (key check, or `python dachser_probe.py <reference>`) and
+  `jobs/dachser_backtest.py` (90 days of bookings), plus the manual GitHub workflow "dachser-probe".
   Picked = picked units / ordered units. Transport = order number found in Dachser track & trace
   (sent via eLogistics); everything else shows "Not booked" (incl. ex-works).
 
@@ -92,7 +106,7 @@ people's Sent Items too (off by default).
 
 ## Changing things
 
-- Rotation, layouts, panels: `components/dashboards.tsx` (`DASHBOARDS`). A new dashboard is one
+- Rotation (5 dashboards, 5 minutes each), layouts, panels: `components/dashboards.tsx` (`DASHBOARDS`). A new dashboard is one
   entry with its own grid layout.
 - Rules and thresholds: constants at the top of `jobs/live.py`, `jobs/nightly.py` and the extractors.
 - Run all tests: `cd jobs && for t in test_*.py; do python $t || exit 1; done`

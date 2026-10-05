@@ -74,3 +74,29 @@ header .meta { font-size: 1.1rem; color: var(--muted); }
 .notes { display: flex; flex-direction: column; gap: .2rem; margin-top: .4rem; font-size: .9rem; color: var(--overdue-ink); }
 .notes b { font-weight: 700; }
 .dots i { cursor: pointer; }
+
+.muted2 { color: var(--muted); font-size: .85rem; width: 8rem; text-align: right; flex: none; }
+.chip.bad { background: var(--overdue-bg); color: var(--overdue-ink); border-color: #E2B9A1; }
+.boardcol.shippedcol { background: #E9E1F0; }
+.card.shipped { background: #F4EEF9; border-color: #C9B5DD; color: #4B2E6B; }
+.card.shipped .cardpo { color: #7A5E99; }
+.callouts { display: flex; gap: 1vw; margin-bottom: 1vh; }
+.callout2 { flex: 1; background: var(--panel); border: 1px solid var(--border); border-radius: .6vw; padding: .8vh 1vw; display: flex; align-items: baseline; gap: 1vw; }
+.callout2 b { font-size: 2.2rem; color: var(--good); white-space: nowrap; }
+.callout2 span { color: var(--muted); }
+.table td.po { max-width: none; white-space: normal; }
+.prodwrap { display: flex; flex-direction: column; gap: 1vh; height: 100%; }
+.prodwrap > .panel { flex: 1; min-height: 0; }
+.weekbanner { background: var(--panel); border: 1px solid var(--border); border-radius: .6vw; padding: .5vh 1vw; font-size: 1.05rem; }
+.ptable { display: grid; gap: .5vw; flex: 1; min-height: 0; }
+.pcol { background: var(--panel-2); border-radius: .5vw; padding: .5vh .4vw; overflow: hidden; display: flex; flex-direction: column; gap: .5vh; }
+.pcol h3 { font-size: .95rem; color: var(--muted); font-weight: 600; }
+.run { background: var(--panel); border: 1px solid var(--border); border-radius: .35vw; padding: .3vh .4vw; }
+.runhead { display: flex; gap: .4vw; align-items: baseline; font-size: .85rem; }
+.runhead b { font-weight: 700; }
+.lang { background: #E4D9C7; border-radius: .3vw; padding: 0 .3vw; font-weight: 600; }
+.sku { margin-left: auto; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.al { display: flex; gap: .35vw; font-size: .78rem; border-top: 1px dotted var(--grid); padding-top: .1vh; }
+.al .q { font-weight: 700; } .al .s { color: var(--muted); width: 5.5vw; text-align: right; }
+.al.free { color: var(--good); } .al.nodata { color: var(--bad); } .al.more2 { color: var(--muted); }
+.empty.small { font-size: .85rem; margin: .5vh 0; }

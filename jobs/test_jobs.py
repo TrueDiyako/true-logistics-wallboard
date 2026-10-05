@@ -48,7 +48,7 @@ class FakeEcon:
 
 class FakeDachser:
     status = "ok"
-    def booked(self, n): return "booked" if n == "1022422" else "not booked"
+    def booked(self, n, po="", start=None): return "booked" if n == "1022422" else "not booked"
 
 def test_column_mapping():
     assert live.column_of("Pakning") == live.NOT_READY and live.column_of("-- none --") == live.NOT_READY
@@ -82,6 +82,7 @@ def test_due_not_ready():
     open_o = [o for o in ORDERS if o["customer_id"] not in common.INTERNAL_CUSTOMERS]
     due = live.build_due_not_ready(open_o, NAMES, TODAY)
     assert [x["order"] for x in due] == ["1022190", "1022352"] and due[0]["overdue"]
+    assert due[0]["days_late"] == 28 and due[1]["days_late"] == 0
 
 def test_emails():
     rows = [{"in_kpi": True, "answered": False, "business_hours": 20, "customer": "a@x.dk", "customer_domain": "x.dk",
@@ -97,31 +98,74 @@ def test_emails():
     rows[0].update(owner="", owner_customer="")
     assert live.build_emails(rows)[0]["owner"] == "Unassigned" and live.build_emails(rows)[0]["company"] == "x.dk"
 
-def test_dachser_status_codes(monkeypatch=None):
+class _Resp:
+    def __init__(self, body, status=200): self.body, self.status = body, status
+    def __enter__(self): return self
+    def __exit__(self, *a): pass
+    def read(self): return json.dumps(self.body).encode()
+
+# real Dachser answers (5 Oct 2026): Hannover stores the PO, Denmark the TraceLink order number
+SHIP_BOOKED = {"id": "41491200792", "shipmentDate": "2026-10-05", "references": [{"code": "100", "value": "PC26387"}],
+               "status": [{"statusSequence": 1, "statusDate": "2026-10-05", "event": {"code": "0", "description": "No status available"}}]}
+SHIP_DELIVERED = {"id": "41491199319", "shipmentDate": "2026-09-29", "status": [
+    {"statusSequence": 1, "statusDate": "2026-10-01T12:43:00", "event": {"code": "Z", "description": "Delivered"}},
+    {"statusSequence": 2, "statusDate": "2026-09-30", "event": {"code": "E", "description": "Inbound"}}]}
+SHIP_TRANSIT = {"id": "41491199974", "shipmentDate": "2026-10-01", "status": [
+    {"statusSequence": 1, "statusDate": "2026-10-02T17:56:00", "event": {"code": "A", "description": "Outbound"}}]}
+SHIP_DK = {"id": "9", "shipmentDate": "2026-10-05", "references": [{"code": "100", "value": "1022811"}],
+           "status": [{"statusSequence": 1, "statusDate": "2026-10-05", "event": {"code": "0"}}]}
+
+def test_dachser_states_keys_and_matching():
+    import urllib.parse as up
     calls = []
-    def fake_open(req, timeout=30):
-        calls.append(req.full_url)
-        raise urllib.error.HTTPError(req.full_url, 401, "x", {}, io.BytesIO(b""))
-    orig = live.urllib.request.urlopen
-    live.urllib.request.urlopen = fake_open
+    def fake(req, timeout=30):
+        key = req.headers.get("X-api-key"); ref = up.parse_qs(up.urlparse(req.full_url).query)["tracking-number"][0]
+        calls.append((key, ref, "shipmenthistory" in req.full_url))
+        if key == "HANNOVER" and ref == "PC26387": return _Resp({"shipments": [SHIP_BOOKED]})
+        if key == "HANNOVER" and ref == "IOR8471": return _Resp({"shipments": [SHIP_DELIVERED]})
+        if key == "HANNOVER" and ref == "Order 21.2026": return _Resp({"shipments": [SHIP_TRANSIT]})
+        if key == "DK" and ref == "1022811": return _Resp({"shipments": [SHIP_DK]})
+        if key == "DK" and ref == "2903": return _Resp({"shipments": [dict(SHIP_DK, shipmentDate="2026-06-01")]})
+        raise urllib.error.HTTPError(req.full_url, 422, "x", {}, io.BytesIO(b"{}"))
+    orig = live.urllib.request.urlopen; live.urllib.request.urlopen = fake; live.time.sleep = lambda s: None
     try:
-        dc = live.Dachser()
-        assert dc.booked("1") == "unknown" and dc.status == "not subscribed"
-        assert dc.booked("2") == "unknown" and len(calls) == 1          # stops calling after 401
+        dc = live.Dachser(["HANNOVER", "DK"])
+        assert dc.booked("1022914", "PC26387", dt.date(2026, 10, 6)) == "booked"
+        assert dc.booked("1022784", "IOR8471", dt.date(2026, 9, 29)) == "delivered"
+        assert dc.booked("1022885", "Order 21.2026", dt.date(2026, 10, 1)) == "in transit"
+        n = len(calls)
+        assert dc.booked("1022811", "PO-TRC-20260921-NEOW", dt.date(2026, 10, 15)) == "booked"     # Glostrup: by order number
+        assert calls[n:] == [("HANNOVER", "1022811", True), ("DK", "1022811", True)]                  # PO not needed
+        assert dc.booked("1022877", "2903", dt.date(2026, 10, 2)) == "not booked"   # generic PO, shipment from June: ignored
+        assert dc.status == "ok"
     finally:
         live.urllib.request.urlopen = orig
-    def ok_open(req, timeout=30):
-        class R:
-            def __enter__(s): return s
-            def __exit__(s, *a): pass
-            def read(s): return json.dumps({"shipments": [{"id": 1}]}).encode()
-        return R()
-    live.urllib.request.urlopen = ok_open
-    live.time.sleep = lambda s: None
+    def deny(req, timeout=30):
+        calls.append(req.full_url); raise urllib.error.HTTPError(req.full_url, 401, "x", {}, io.BytesIO(b""))
+    live.urllib.request.urlopen = deny; calls.clear()
     try:
-        assert live.Dachser().booked("1022422") == "booked"
+        dc = live.Dachser(["BAD"])
+        assert dc.booked("1", "", None) == "unknown" and dc.status == "not subscribed"
+        assert "shipmenthistory" in calls[0] and "shipmentstatus" in calls[1] and len(calls) == 2
+        assert dc.booked("2", "", None) == "unknown" and len(calls) == 2        # no more calls after both refused
     finally:
         live.urllib.request.urlopen = orig
+    assert live.Dachser([]).booked("1") == "unknown" and live.Dachser([]).status == "no key"
+
+def test_booking_warning_and_workdays():
+    assert live.workdays_until(dt.date(2026, 10, 2), dt.date(2026, 10, 6)) == 2   # Fri -> Tue = Mon, Tue
+    open_o = [o for o in ORDERS if o["customer_id"] not in common.INTERNAL_CUSTOMERS]
+    tl = FakeTL()
+    live.BOOKING_WARNING = True
+    try:
+        rows = live.build_biggest(open_o, NAMES, dict(VALUES), lambda i: tl.module("genobj", i), FakeDachser(), TODAY)
+    finally:
+        live.BOOKING_WARNING = False
+    r = {x["order"]: x for x in rows}
+    assert r["1022352"]["book_now"] and r["1022319"]["book_now"]            # Fri 2 Oct / Mon 5 Oct, not booked
+    assert not r["1022811"]["book_now"] and not r["1022422"]["book_now"]    # 12 Oct is far; 1022422 booked
+    s = live.biggest_summary(open_o, dict(VALUES), rows, TODAY)
+    assert s["top_value_dkk"] == round(sum(VALUES.values())) and s["top_share_pct"] == 100.0 and s["booked"] == 1
 
 def test_live_main_end_to_end():
     store = {}
@@ -130,7 +174,8 @@ def test_live_main_end_to_end():
     orig_run = rx.run
     rx.run = lambda g: ([], [])
     try:
-        payload, health = live.main(tl=FakeTL(), econ=FakeEcon(), graph=object(), dachser=FakeDachser(), today=TODAY)
+        payload, health = live.main(tl=FakeTL(), econ=FakeEcon(), graph=object(), dachser=FakeDachser(), today=TODAY,
+                                    plan_source=__import__("test_production").plan_xlsx)
     finally:
         rx.run = orig_run
     assert health["ok"], health
@@ -146,7 +191,8 @@ def test_live_failure_keeps_previous_section():
     def boom(g): raise RuntimeError("Graph 403")
     orig_run = rx.run; rx.run = boom
     try:
-        payload, health = live.main(tl=FakeTL(), econ=FakeEcon(), graph=object(), dachser=FakeDachser(), today=TODAY)
+        payload, health = live.main(tl=FakeTL(), econ=FakeEcon(), graph=object(), dachser=FakeDachser(), today=TODAY,
+                                    plan_source=__import__("test_production").plan_xlsx)
     finally:
         rx.run = orig_run
     assert not health["ok"] and health["errors"][0]["section"] == "emails"
@@ -166,12 +212,12 @@ def test_nightly_payload_builders():
               + [_ord("Small", TODAY, False, False, 10, 5) for _ in range(3)])
     otif = nightly.otif_payload(orders)
     assert otif["headline"]["orders"] == 21 and otif["headline"]["on_time_pct"] == round(100 * 15 / 21, 1)
-    disp = nightly.dispatch_payload([_ord("A", TODAY - dt.timedelta(days=9), True, True, late=0),
-                                     _ord("A", TODAY - dt.timedelta(days=9), True, True, late=2),
-                                     _ord("A", TODAY - dt.timedelta(days=9), True, True, late=-1),
-                                     _ord("A", TODAY - dt.timedelta(days=9), True, True, note=0)], TODAY)
-    assert disp["on_plan_pct"] == 66.7 and disp["measured"] == 3 and disp["no_delivery_note_pct"] == 25.0
-    assert disp["weekly"][-1]["week"] == "2026-W39" and disp["weekly"][-1]["pct"] == 66.7
+    # 100 ordered, 2 short = 2%; 10 ordered, 5 short = 50%; full = 0% -> average 17.3%, 2 of 3 short
+    sp = nightly.shorts_payload([_ord("A", TODAY - dt.timedelta(days=9), True, False, 100, 98),
+                                 _ord("B", TODAY - dt.timedelta(days=9), True, False, 10, 5),
+                                 _ord("C", TODAY - dt.timedelta(days=9), True, True, 50, 50)], TODAY)
+    assert sp["avg_short_pct"] == 17.3 and sp["orders_with_short_pct"] == 66.7 and sp["orders"] == 3
+    assert sp["weekly"] == [{"week": "2026-W39", "pct": 17.3, "orders": 3}]
     c = nightly.customers_payload(orders)
     assert [x["customer"] for x in c["best"]][0] == "Big" and c["worst"][0]["customer"] == "Small"
     assert c["order_fill_rate_pct"] == round(100 * 195 / 210, 1)
@@ -203,7 +249,7 @@ def test_nightly_main_with_fakes():
     assert r["no_reply"] == {"count": 2, "order_in_tracelink": 1, "order_in_tracelink_pct": 50.0}
     assert r["trend"][-1] == {"week": "2026-W39", "pct": 33.3, "waits": 3}
     assert r["last4"]["no reply"] == 66.7 and r["last4"]["waits"] == 3
-    assert "dispatch" in k and "shorts" not in k
+    assert "shorts" in k and "dispatch" not in k
     assert r["outside_copy"] == {"count": 0, "answered": 1, "pct": 0.0, "by_person": []}
     assert k["credit"]["headline"]["credit_pct"] == 20.0 and k["credit"]["to_check"][0]["reason"] == "credited more than invoiced"
     assert k["credit"]["weekly"] == []                                   # W40 is the running week

@@ -17,14 +17,21 @@ jobs:
       CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
       APP_SECRET_TOKEN: ${{ secrets.APP_SECRET_TOKEN }}
       AGREEMENT_GRANT_TOKEN: ${{ secrets.AGREEMENT_GRANT_TOKEN }}
-      DACHSER_API_KEY: ${{ secrets.DACHSER_API_KEY }}
+      DACHSER_API_KEY: ${{ secrets.DACHSER_API_KEY }}          # Hannover login
+      DACHSER_API_KEY_DK: ${{ secrets.DACHSER_API_KEY_DK }}    # Denmark login(s) - optional
+      DACHSER_API_KEY_DK2: ${{ secrets.DACHSER_API_KEY_DK2 }}
+      DACHSER_API_KEY_DK3: ${{ secrets.DACHSER_API_KEY_DK3 }}
+      BOOKING_WARNING: ${{ vars.BOOKING_WARNING }}             # "1" = red "book now" on dashboard 4
       KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
       KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
+      - run: pip install openpyxl==3.1.5
       - name: Tests
-        run: KV_REST_API_URL= python test_jobs.py
+        run: |
+          KV_REST_API_URL= python test_production.py
+          KV_REST_API_URL= python test_jobs.py
       - name: Build order lists and publish
         run: python live.py
