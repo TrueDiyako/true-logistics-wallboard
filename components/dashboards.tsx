@@ -200,6 +200,24 @@ const customersPanel: PanelFn = ({ kpi }) => {
   );
 };
 
+// weclapp (German market) orders with no TraceLink order yet - replaces the OTIF customer
+// ranking on dashboard 2 (the ranking is still computed nightly: customersPanel, kept for later)
+const weclappPanel: PanelFn = ({ live }) => {
+  const w = live?.weclapp;
+  if (!w) return <Panel title="weclapp orders not in TraceLink"><Missing /></Panel>;
+  const since = new Date(w.tracking_from + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return (
+    <Panel title="weclapp orders not in TraceLink" note={`created from ${since}`}>
+      <Headlines items={[{ label: `of ${w.orders} weclapp orders${w.no_po ? ` · ${w.no_po} without PO` : ""}`,
+                           value: String(w.missing_count), color: w.missing_count ? C.noReply : C.reply }]} />
+      <List rows={w.missing} max={11} empty="Every weclapp order is in TraceLink"
+            render={(r) => (<><span className="grow"><b>{r.customer}</b>
+                                <span className="sub">PO {r.po || "missing"} · weclapp #{r.weclapp}</span></span>
+                              <span className={r.age_days >= 2 ? "bad" : "warn"}>{r.age_days === 0 ? "today" : `${r.age_days} d`}</span></>)} />
+    </Panel>
+  );
+};
+
 // ---------------- dashboard 3: status board ----------------
 const statusBoard: PanelFn = ({ live }) => {
   const b = live?.status_board;
@@ -326,7 +344,7 @@ export const DASHBOARDS: Dashboard[] = [
     panels: { otif: otifPanel, shorts: shortsPanel, reply: responsePanel, credit: creditPanel } },
   { id: "action", title: "What needs doing now", seconds: 300,
     layout: `"emails due customers" "emails credits customers"`, columns: "1.1fr 1.35fr 0.95fr", rows: "1fr 1fr",
-    panels: { emails: emailsPanel, due: duePanel, credits: creditsCheckPanel, customers: customersPanel } },
+    panels: { emails: emailsPanel, due: duePanel, credits: creditsCheckPanel, customers: weclappPanel } },
   { id: "status", title: "Open orders by status", seconds: 300,
     layout: `"board"`, columns: "1fr", rows: "1fr", panels: { board: statusBoard } },
   { id: "biggest", title: "Biggest open orders", seconds: 300,

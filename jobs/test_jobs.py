@@ -175,6 +175,7 @@ def test_live_main_end_to_end():
     rx.run = lambda g: ([], [])
     try:
         payload, health = live.main(tl=FakeTL(), econ=FakeEcon(), graph=object(), dachser=FakeDachser(), today=TODAY,
+                                    weclapp=__import__("test_weclapp").FakeWeclapp([__import__("test_weclapp").WECLAPP]),
                                     plan_source=__import__("test_production").plan_xlsx)
     finally:
         rx.run = orig_run
@@ -183,6 +184,8 @@ def test_live_main_end_to_end():
     orders = [x["order"] for c in store["lk:live"]["status_board"] for x in c["orders"]]
     assert "1022832" not in orders and "1020354" not in orders           # internal excluded
     assert store["lk:live"]["biggest"][0]["customer"] == "Humble Group USA"
+    wc = store["lk:live"]["weclapp"]
+    assert wc["tracking_from"] == "2026-10-06" and wc["orders"] == 6 and wc["missing_count"] >= 1
 
 def test_live_failure_keeps_previous_section():
     store = {"lk:live": {"emails_waiting": [{"customer": "old"}]}}
@@ -192,6 +195,7 @@ def test_live_failure_keeps_previous_section():
     orig_run = rx.run; rx.run = boom
     try:
         payload, health = live.main(tl=FakeTL(), econ=FakeEcon(), graph=object(), dachser=FakeDachser(), today=TODAY,
+                                    weclapp=__import__("test_weclapp").FakeWeclapp([__import__("test_weclapp").WECLAPP]),
                                     plan_source=__import__("test_production").plan_xlsx)
     finally:
         rx.run = orig_run

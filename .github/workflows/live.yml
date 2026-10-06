@@ -24,6 +24,7 @@ jobs:
       DACHSER_API_KEY_DK2: ${{ secrets.DACHSER_API_KEY_DK2 }}
       DACHSER_API_KEY_DK3: ${{ secrets.DACHSER_API_KEY_DK3 }}
       BOOKING_WARNING: ${{ vars.BOOKING_WARNING }}             # "1" = red "book now" on dashboard 4
+      WECLAPP_TOKEN: ${{ secrets.WECLAPP_TOKEN }}              # weclapp API token (read only is enough)
       KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
       KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
     steps:
@@ -34,6 +35,7 @@ jobs:
       - name: Tests
         run: |
           KV_REST_API_URL= python test_production.py
+          KV_REST_API_URL= python test_weclapp.py
           KV_REST_API_URL= python test_jobs.py
       - name: Build order lists and publish
         run: python live.py

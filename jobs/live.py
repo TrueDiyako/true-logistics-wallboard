@@ -7,6 +7,7 @@ Writes Redis key lk:live:
   due_not_ready  dashboard 2: due within ACTION_DAYS, not ready for warehouse
   emails_waiting dashboard 2: customer mails waiting > 1 business day
   production     dashboard 5: this week's production plan and what it covers
+  weclapp        dashboard 2: weclapp orders (from 6 Oct) with no TraceLink order
 """
 import datetime as dt
 import json
@@ -21,6 +22,7 @@ import common
 import credit_notes_extract as cx
 import otif_extract as ox
 import production
+import weclapp_check
 import response_time_extract as rx
 
 # One Track & Trace key per Dachser login: Hannover (Dachser-run warehouse) and Denmark
@@ -239,7 +241,7 @@ def build_emails(rows):
 
 
 # ----------------------------- main ----------------------------------------
-def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=None):
+def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=None, weclapp=None):
     today = today or common.cph_now().date()
     tl, econ, dachser = tl or ox.TraceLink(), econ or cx.Economic(), dachser or Dachser()
     h = common.Health("live")
@@ -285,6 +287,8 @@ def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=N
         rows, _ = rx.run(graph or rx.Graph())
         return build_emails(rows)
     payload["emails_waiting"] = h.section("emails", emails)
+    payload["weclapp"] = h.section("weclapp vs TraceLink", weclapp_check.build,
+                                   weclapp or weclapp_check.Weclapp(), tl, today)
 
     def plan():
         res = []
@@ -303,7 +307,8 @@ def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=N
 
     payload = {k: v for k, v in payload.items() if v is not None}
     common.keep_previous(payload, "lk:live",
-                         ["status_board", "biggest", "biggest_summary", "due_not_ready", "emails_waiting", "production"])
+                         ["status_board", "biggest", "biggest_summary", "due_not_ready", "emails_waiting", "production",
+                          "weclapp"])
     payload["dachser_tracking"] = dachser.status
     payload["booking_warning"] = BOOKING_WARNING
     common.redis_set("lk:live", payload)

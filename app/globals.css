@@ -100,3 +100,4 @@ header .meta { font-size: 1.1rem; color: var(--muted); }
 .al .q { font-weight: 700; } .al .s { color: var(--muted); width: 5.5vw; text-align: right; }
 .al.free { color: var(--good); } .al.nodata { color: var(--bad); } .al.more2 { color: var(--muted); }
 .empty.small { font-size: .85rem; margin: .5vh 0; }
+.row .sub { display: block; font-size: .85rem; color: var(--muted); }

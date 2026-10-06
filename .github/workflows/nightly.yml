@@ -38,5 +38,6 @@ jobs:
           KV_REST_API_URL= python test_credit.py
           KV_REST_API_URL= python test_jobs.py
           KV_REST_API_URL= python test_production.py
+          KV_REST_API_URL= python test_weclapp.py
       - name: Build KPIs and publish
         run: python nightly.py

@@ -91,6 +91,13 @@ free external cron that presses "Run workflow" through GitHub's API:
   shown under "Not ready".
 - **Dashboard 3 cards** show customer, TraceLink order number and the customer's order number
   (the TraceLink order name).
+- **Dashboard 2, weclapp orders not in TraceLink**: weclapp sales orders created from 6 Oct 2026
+  (not cancelled, not the test customer) whose customer PO has no TraceLink order of True Company
+  GmbH (1364). TraceLink is searched by "customer | PO" names and by POs listed in batch-order
+  descriptions; exact PO first, then a shortened PO ("Order 2" for "Order 2 - Hammer Fitness
+  Shop"); one TraceLink entry matches one weclapp order. Refreshed hourly. Needs the GitHub secret
+  `WECLAPP_TOKEN`. (The OTIF best/worst customer ranking is still computed nightly into `lk:kpi`
+  -> `customers`, just not shown.)
 - **Dashboard 4**: open orders, start date today or later, top 20 by current e-conomic value, plus their
   share of all open order value. Delivery = current TraceLink delivery date. Transport = Dachser Track &
   Trace (shipmenthistory): looked up by TraceLink order number (Glostrup bookings) and customer order

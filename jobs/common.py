@@ -16,6 +16,21 @@ INTERNAL_CUSTOMERS = {"0", "2", "1128", "1129", "3019", "1364"}
 UTC = dt.timezone.utc
 
 
+def cph_offset_hours(utc_moment):
+    """+2 in EU summer time (last Sunday of March 01:00 UTC to last Sunday of October), else +1."""
+    def last_sunday(y, m):
+        d = (dt.date(y, m + 1, 1) - dt.timedelta(days=1))
+        return d - dt.timedelta(days=(d.weekday() + 1) % 7)
+    y = utc_moment.year
+    start = dt.datetime.combine(last_sunday(y, 3), dt.time(1), UTC)
+    end = dt.datetime.combine(last_sunday(y, 10), dt.time(1), UTC)
+    return 2 if start <= utc_moment < end else 1
+
+
+def to_cph(utc_moment):
+    return (utc_moment + dt.timedelta(hours=cph_offset_hours(utc_moment))).replace(tzinfo=None)
+
+
 def cph_now():
     """Copenhagen local time without a tz database (EU DST rules)."""
     now = dt.datetime.now(UTC)
