@@ -39,6 +39,26 @@ the last good data stays on screen, and GitHub e-mails the repository owner.
    Nightly takes ~15 min the first time (it reads 3 months of TraceLink orders), a few minutes after that.
 6. **TV**: open the Vercel URL in the TV browser, full screen. `?d=3` pins one dashboard (for testing).
 
+## Hourly trigger (needed - GitHub's own schedule is unreliable)
+
+GitHub delays or drops scheduled runs when it is busy (on 5 Oct only 1 of 13 hourly runs
+started). The `live.yml` schedule stays as a backup; the reliable hourly start comes from a
+free external cron that presses "Run workflow" through GitHub's API:
+
+1. GitHub -> your avatar -> Settings -> Developer settings -> Personal access tokens ->
+   **Fine-grained tokens -> Generate new token**. Name `wallboard-trigger`, expiry 1 year,
+   Repository access: **Only select repositories -> true-logistics-wallboard**,
+   Permissions -> Repository -> **Actions: Read and write**. Copy the token.
+2. cron-job.org (free account) -> **Create cronjob**:
+   - URL `https://api.github.com/repos/TrueDiyako/true-logistics-wallboard/actions/workflows/live.yml/dispatches`
+   - Schedule: every hour at minute 7, hours 6-18, Monday-Friday, time zone Europe/Copenhagen
+   - Advanced -> Request method **POST**, request body `{"ref":"main"}`, headers
+     `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`,
+     `X-GitHub-Api-Version: 2022-11-28`
+   - Save and click "Test run": the answer must be **204**, and a "Manually run" appears
+     under Actions -> live-orders within a minute.
+3. Renew the token before it expires (cron-job.org mails you when calls start failing).
+
 ## Recurring maintenance
 
 - **Microsoft Graph client secret**: renew before it expires (max 24 months) and update the
@@ -94,6 +114,18 @@ person (from the "Customer - Responsible" list), plus `confirm_required`:
 `no` = this customer's mails don't expect an answer (e.g. Helsam POs) and stay out of the KPI.
 Add a line for every new customer domain (`domain;customer;responsible;confirm_required`), commit,
 and the next run uses it. Senders with no line show as "Unassigned".
+
+**Replies in a new thread** (new subject, possibly to a sister domain of the same
+customer, e.g. humblegroup.com for a PO from humblegroupusa.com) count when the team mail
+goes to the same company (customer list, else domain) and either mentions the PO/order
+reference of the customer's mail in its subject or opening text (within 10 days), or is
+sent within 1 business day of it (any subject). Customers marked `confirm_required = no`
+(Helsam, Coop, Green Sales) stay out of the KPI.
+
+**Credits to check** = chains of invoices and credit notes (same customer and heading or
+order reference) whose total balance is negative. A heading that was invoiced, credited and
+re-invoiced several times but nets positive (EUROBRANDS EB51) still counts in the credit KPI
+but is not "to check".
 
 **Replies without order@ in copy.** Only order@ is read - no personal mailboxes, no extra IT
 permissions. When someone replies from their own mailbox without copying order@, the customer's

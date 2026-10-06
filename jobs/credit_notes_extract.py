@@ -206,17 +206,64 @@ def classify(credits, invoices, details):
             "goods_lines": len(goods), "lines": len(lines),
             "credited_units": -sum(float(l.get("quantity", 0)) for l in goods),
         })
-    # an invoice credited for more than its own amount = credited twice by mistake
-    tot = {}
+    # Over-credited = the whole chain (all invoices and credit notes of one customer that
+    # share a heading or an order reference) nets below zero. A heading that was invoiced,
+    # credited, re-invoiced, credited and re-invoiced again (EUROBRANDS EB51: 5 documents,
+    # net +36,012 EUR) is fine; only a negative balance means more was credited than billed.
+    chains = chain_balances(list({x["bookedInvoiceNumber"]: x for x in invoices + credits}.values()))
     for r in rows:
-        if r["reverses_invoice"] != "":
-            tot.setdefault(r["reverses_invoice"], []).append(r)
-    orig_amt = {i["bookedInvoiceNumber"]: float(i.get("netAmount", 0)) for i in invoices}
-    for r in rows:
-        grp = tot.get(r["reverses_invoice"], [])
-        credited = -sum(x["amount"] for x in grp)
-        r["over_credited"] = bool(grp) and credited > orig_amt.get(r["reverses_invoice"], 0) + 0.01
+        ch = chains.get(r["credit_note"], {})
+        r["chain"] = ch.get("key", "")
+        r["chain_documents"] = ch.get("documents", 0)
+        r["chain_net"] = ch.get("net", "")
+        r["over_credited"] = bool(ch) and ch["has_invoice"] and ch["net"] < -0.01
     return rows
+
+
+_GENERIC_HEADINGS = {"", "order", "ordre", "invoice", "faktura", "credit note", "kreditnota"}
+
+
+def chain_balances(docs):
+    """Group one customer's invoices and credit notes into chains: documents are linked when
+    they share a heading or an order reference ('Order no. #1021530', or the invoice's own
+    order number). Returns {document number: {key, documents, net, has_invoice}}; net is in
+    the documents' currency."""
+    parent = {}
+
+    def find(x):
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        parent[find(a)] = find(b)
+
+    for doc in docs:
+        n, c = doc["bookedInvoiceNumber"], cust(doc)
+        keys = []
+        hd = heading(doc).strip().lower()
+        if hd not in _GENERIC_HEADINGS and len(hd) >= 3:
+            keys.append(("h", c, hd))
+        ro = ref_order(doc)
+        if ro:
+            keys.append(("o", c, ro))
+        if float(doc.get("netAmount", 0)) > 0 and doc.get("orderNumber"):
+            keys.append(("o", c, int(doc["orderNumber"])))
+        for k in keys:
+            union(("d", n), k)
+    groups = {}
+    for doc in docs:
+        groups.setdefault(find(("d", doc["bookedInvoiceNumber"])), []).append(doc)
+    out = {}
+    for root, members in groups.items():
+        net = round(sum(float(m.get("netAmount", 0)) for m in members), 2)
+        info = {"key": " / ".join(sorted({heading(m) for m in members if heading(m)})) or str(root[1]),
+                "documents": len(members), "net": net,
+                "has_invoice": any(float(m.get("netAmount", 0)) > 0 for m in members)}
+        for m in members:
+            out[m["bookedInvoiceNumber"]] = info
+    return out
 
 
 def line_rows(credit_rows, details):

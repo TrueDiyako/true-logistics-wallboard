@@ -175,7 +175,7 @@ const creditsCheckPanel: PanelFn = ({ kpi }) => (
   <Panel title="Credits to check">
     {!kpi?.credit ? <Missing /> :
       <List rows={kpi.credit.to_check || []} max={6} empty="Nothing to check"
-            render={(r) => (<><span className="grow">{r.customer} · invoice {r.reverses_invoice} {r.reason}</span>
+            render={(r) => (<><span className="grow">{r.customer} · {r.chain || `invoice ${r.reverses_invoice}`} · {r.reason}</span>
                               <span className="bad">{dkk(-r.amount_dkk)}</span></>)} />}
   </Panel>
 );

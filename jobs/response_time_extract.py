@@ -104,6 +104,13 @@ SHARED_LOCAL_PARTS = {"order", "orders", "wholesale", "sales", "invoice", "invoi
 # A team mail in ANOTHER thread still counts as the reply if it goes to the
 # customer within this many days and shares the subject or an order number.
 FALLBACK_DAYS = 10
+# A reply in a NEW thread (new subject, sometimes to a sister domain such as
+# humblegroup.com for a PO from humblegroupusa.com) counts when the team mail goes
+# to the same company and either
+#   - mentions the PO / order reference of the customer's mail (subject or opening
+#     text), within FALLBACK_DAYS, or
+#   - is sent within SAME_COMPANY_BH business hours (any subject).
+SAME_COMPANY_BH = 8
 # Not customers: suppliers' own confirmations, newsletters, service vendors
 NON_CUSTOMER_DOMAINS = {
     "exa.ai", "hive.app", "stamegna.eu", "cma-cgm.com", "pakkeshop.dk",
@@ -213,7 +220,7 @@ class Graph:
 
     def messages(self, since_iso, until_iso, mailbox=None, folder=None):
         sel = ("id,conversationId,subject,from,toRecipients,ccRecipients,"
-               "receivedDateTime,sentDateTime,isDraft,parentFolderId")
+               "receivedDateTime,sentDateTime,isDraft,parentFolderId,bodyPreview")
         flt = f"receivedDateTime ge {since_iso} and receivedDateTime le {until_iso}"
         box = urllib.parse.quote(mailbox or MAILBOX)
         base = f"{GRAPH_BASE}/users/{box}/" + (f"mailFolders/{folder}/messages" if folder else "messages")
@@ -307,6 +314,20 @@ def norm_subject(s):
 
 def order_numbers(s):
     return set(re.findall(r"\d{5,}", s or ""))
+
+
+_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9_/-]*\d{5,}[A-Za-z0-9_/-]*")
+
+
+def references(s):
+    """PO / order references in a text: codes with 5+ digits ('PO-TRC-20260921-NEOW',
+    '238436', 'KO054417'), lower-case, trailing punctuation dropped."""
+    return {t.strip("-_/").lower() for t in _REF.findall(s or "")}
+
+
+def mentions(text, refs):
+    low = (text or "").lower()
+    return any(r in low for r in refs)
 
 
 _OWNERS = None
@@ -482,6 +503,23 @@ def reaches(team_msg, customer_addr):
     return False
 
 
+def company_of(address):
+    """Customer company: the customer-list name's first word ('Humble - USA' and
+    'Humble - CAN' -> humble), else the registrable domain. Free-mail has no company."""
+    o = owner_of(address).get("customer", "")
+    if o:
+        return re.split(r"[\s\-/(]+", o.strip().lower())[0]
+    return "" if domain(address) in FREEMAIL else reg_domain(address)
+
+
+def reaches_company(team_msg, customer_addr):
+    comp = company_of(customer_addr)
+    for r in recipients(team_msg):
+        if r == customer_addr or (comp and not is_team(r) and company_of(r) == comp):
+            return True
+    return False
+
+
 def recipients(m):
     return {addr(r) for r in (m.get("toRecipients") or []) + (m.get("ccRecipients") or [])}
 
@@ -568,6 +606,28 @@ def build_waits(messages, now_utc, body_of=None):
             if (ns and norm_subject(m.get("subject")) == ns) or (nums & order_numbers(m.get("subject"))):
                 w.update(replied=m["_t"], replied_by=m["_from"], via="other thread")
                 break
+
+    # new thread to the same company: PO/order reference mentioned, or sent within a business day
+    for w in waits:
+        if w["replied"] is not None:
+            continue
+        refs = references(w["subject"])
+        limit = w["received"] + dt.timedelta(days=FALLBACK_DAYS)
+        loose = None
+        for m in team:
+            if m["_t"] <= w["received"]:
+                continue
+            if m["_t"] > limit:
+                break
+            if m.get("conversationId") == w["conversation_id"] or not reaches_company(m, w["customer"]):
+                continue
+            if refs and (mentions(m.get("subject"), refs) or mentions(m.get("bodyPreview"), refs)):
+                w.update(replied=m["_t"], replied_by=m["_from"], via="new thread (reference)")
+                break
+            if loose is None and business_hours(w["received"], m["_t"]) <= SAME_COMPANY_BH:
+                loose = m
+        if w["replied"] is None and loose is not None:
+            w.update(replied=loose["_t"], replied_by=loose["_from"], via="new thread (same company)")
 
     # reply sent from a personal mailbox without order@ in copy: the customer's
     # follow-up shows it (addressed to that person and/or quoting their reply)
@@ -710,6 +770,8 @@ def summarise(rows):
                                                         and r["no_reply_needed"])),
     ]
     via = sum(1 for r in kpi if r["replied_via"] == "other thread")
+    via_ref = sum(1 for r in kpi if r["replied_via"] == "new thread (reference)")
+    via_comp = sum(1 for r in kpi if r["replied_via"] == "new thread (same company)")
     outside = [r for r in kpi if r.get("without_order_copy")]
     by_person = {}
     for r in outside:
@@ -717,6 +779,7 @@ def summarise(rows):
         by_person[p] = by_person.get(p, 0) + 1
     lines = (block("FIRST RESPONSE - headline (new customer topic to order@/wholesale@)", kpi)
              + [f"  replies found in another thread: {via}",
+                f"  replies in a new thread: {via_ref} by PO/order reference, {via_comp} by same company within 1 business day",
                 f"  answered WITHOUT order@ in copy: {len(outside)} of {sum(1 for r in kpi if r['answered'])}"
                 + (" (" + ", ".join(f"{k} {v}" for k, v in sorted(by_person.items(), key=lambda x: -x[1])) + ")"
                    if by_person else ""), ""]

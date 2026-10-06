@@ -258,11 +258,14 @@ def test_complete_weeks_and_credit_dedupe():
     rows = [{"week": f"2026-W{w:02d}"} for w in range(20, 41)]
     out = nightly.complete_weeks(rows, TODAY)
     assert out[-1]["week"] == "2026-W39" and len(out) == 13
-    cn = [{"internal": False, "over_credited": True, "credit_note": n, "customer": "EUROBRANDS", "date": d,
-           "amount_dkk": -277000.0, "reverses_invoice": "20131"} for n, d in ((20517, "2026-08-10"), (20550, "2026-09-10"))]
+    # two credit notes in one over-credited chain -> one row; a chain that nets positive -> none
+    cn = [{"internal": False, "over_credited": True, "credit_note": n, "customer": "LVK", "date": d, "chain": "Delivery to Stiller",
+           "chain_net": -16273.0, "amount_dkk": -142000.0, "reverses_invoice": "19964"} for n, d in ((20565, "2026-09-01"), (20566, "2026-09-02"))]
+    cn.append({"internal": False, "over_credited": False, "credit_note": 20550, "customer": "EUROBRANDS", "date": "2026-09-10",
+               "chain": "EB51", "chain_net": 36012.19, "amount_dkk": -277000.0, "reverses_invoice": "20131"})
     c = nightly.credit_payload([], cn)
-    assert len(c["to_check"]) == 1 and c["to_check"][0]["amount_dkk"] == -554000.0
-    assert c["to_check"][0]["reason"] == "credited 2 times" and c["to_check"][0]["date"] == "2026-09-10"
+    assert len(c["to_check"]) == 1 and c["to_check"][0]["amount_dkk"] == -284000.0 and c["to_check"][0]["chain"] == "Delivery to Stiller"
+    assert c["to_check"][0]["reason"] == "credited more than invoiced" and c["to_check"][0]["date"] == "2026-09-02"
 
 def test_cph_now_is_naive_local():
     n = common.cph_now()

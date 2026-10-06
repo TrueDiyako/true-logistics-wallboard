@@ -1,10 +1,12 @@
 name: live-orders
 on:
   schedule:
-    - cron: "5 4-16 * * 1-5"      # every hour at :05, ~06:05-18:05 Copenhagen, Mon-Fri
+    # Backup only: GitHub delays or drops scheduled runs under load (seen: 1 of 13 ran on
+    # 5 Oct). The hourly trigger is an external cron calling "Run workflow" (README).
+    - cron: "23 4-16 * * 1-5"     # odd minute: less crowded than :00/:05
     - cron: "0 9 * * 0,6"         # once a day at weekends
   workflow_dispatch: {}
-concurrency: { group: live, cancel-in-progress: true }
+concurrency: { group: live, cancel-in-progress: false }   # queue, never kill a running update
 jobs:
   live:
     runs-on: ubuntu-24.04

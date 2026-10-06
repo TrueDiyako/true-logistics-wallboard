@@ -281,6 +281,7 @@ def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=N
         rx.DATE_FROM = (today - dt.timedelta(days=EMAIL_LOOKBACK_DAYS)).isoformat()
         rx.DATE_TO = None
         rx.OUTPUT_DIR = tempfile.mkdtemp()
+        rx.MAX_BODY_READS = 80      # hourly run: keep it short (the nightly run reads up to 400)
         rows, _ = rx.run(graph or rx.Graph())
         return build_emails(rows)
     payload["emails_waiting"] = h.section("emails", emails)

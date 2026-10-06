@@ -113,12 +113,41 @@ def test_reply_in_other_thread_matched_by_order_number():
     assert w["answered"] and w["replied_via"] == "other thread" and w["in_kpi"]
     assert w["business_hours"] == 2.67
 
-def test_other_thread_needs_subject_or_number_match():
-    t = [M("p1", "a@buyer.de", "2026-07-03T08:00:00Z", "New order 4711", to=["order@truecompany.com"]),
-         M("p2", "order@truecompany.com", "2026-07-03T09:00:00Z", "Price list 2027", to=["a@buyer.de"]),
+def test_other_thread_unrelated_mail_only_counts_within_one_business_day():
+    # option C: any team mail to the same company within 1 business day counts (agreed trade-off);
+    # an unrelated mail 2 business days later does not, and a reply after FALLBACK_DAYS doesn't either
+    t = [M("p1", "a@buyer.de", "2026-07-03T08:00:00Z", "New order 4711", to=["order@truecompany.com"]),   # Friday
+         M("p2", "order@truecompany.com", "2026-07-07T11:00:00Z", "Price list 2027", to=["a@buyer.de"]),  # Tuesday
          M("p3", "order@truecompany.com", "2026-07-20T09:00:00Z", "SV: New order 4711", to=["a@buyer.de"])]
     [w] = waits(t)
-    assert not w["answered"]                     # p2 unrelated, p3 beyond FALLBACK_DAYS
+    assert not w["answered"]
+    t[1] = M("p2", "order@truecompany.com", "2026-07-03T09:00:00Z", "Price list 2027", to=["a@buyer.de"])
+    [w] = waits(t)
+    assert w["answered"] and w["replied_via"] == "new thread (same company)"
+
+def test_humble_reply_in_new_thread_to_sister_domain():
+    # real (21 Sep 2026): POs from orders@humblegroupusa.com 07:52Z; Marc answers 12:30Z in a NEW thread
+    # "Humble Group US - " to cameron.morris@humblegroup.com (other domain), order@ in copy,
+    # mentioning PO-TRC-20260921-4FA0 in the text
+    po1 = M("a", "orders@humblegroupusa.com", "2026-09-21T07:52:22Z",
+            "Purchase Order PO-TRC-20260921-4FA0 — Humble Group USA Inc.", to=["order@truecompany.com"])
+    po2 = M("b", "orders@humblegroupusa.com", "2026-09-21T07:52:56Z",
+            "Purchase Order PO-TRC-20260921-NEOW — Humble Group USA Inc.", to=["order@truecompany.com"])
+    rep = M("c", "marc@truecompany.com", "2026-09-21T12:30:20Z", "Humble Group US - ",
+            to=["cameron.morris@humblegroup.com"], cc=["order@truecompany.com"])
+    rep["bodyPreview"] = ("Hi Cameron, Thanks for the order, we will rush to get it ready as soon as possible. "
+                          "PO-TRC-20260921-4FA0 (US Products - Airfreight) Requested Shipment Date 25th of September")
+    w = {x["subject"][:35]: x for x in waits([po1, po2, rep])}
+    a, b = w["Purchase Order PO-TRC-20260921-4FA0"], w["Purchase Order PO-TRC-20260921-NEOW"]
+    assert a["answered"] and a["replied_via"] == "new thread (reference)"
+    assert b["answered"] and b["replied_via"] == "new thread (same company)"      # same day, same company
+    assert rx.company_of("cameron.morris@humblegroup.com") == rx.company_of("orders@humblegroupusa.com") == "humble"
+
+def test_references_and_freemail_has_no_company():
+    assert rx.references("Purchase Order PO-TRC-20260921-NEOW — Humble") == {"po-trc-20260921-neow"}
+    assert rx.references("Købsordre KO054417 fra Sügro") == {"ko054417"}
+    assert rx.references("Hello there 2026") == set()
+    assert rx.company_of("someone@gmail.com") == ""
 
 def test_broken_thread_matched_by_normalised_subject():
     t = [M("a", "sales@ecocareinnovation.com", "2026-07-01T08:28:00Z", "Re[3]: SV: SV: URGENT: NEW ORDER GREECE", to=["order@truecompany.com"]),

@@ -103,6 +103,28 @@ def test_double_credit_flagged():
     r = cx.classify([a, b], [o, a, b], det)
     assert all(x["over_credited"] for x in r) and all(x["reverses_invoice"] == 19964 for x in r)
 
+def test_eb51_chain_nets_positive_not_flagged():
+    # real EUROBRANDS EB51 (e-conomic, 6 Oct 2026): invoice, credit, lower re-invoice, credit,
+    # re-invoice - 5 documents, net +36,012.19 EUR -> counted as credits, NOT "to check"
+    h = "EB51"
+    i1 = INV(20131, "2026-08-10", 1692, 37046.4, heading=h, order=1022096)
+    c1 = INV(20517, "2026-08-10", 1692, -37046.4, heading=h)
+    i2 = INV(20518, "2026-09-10", 1692, 36012.19, heading=h, order=1022711)
+    c2 = INV(20550, "2026-09-10", 1692, -37046.4, heading=h)
+    i3 = INV(20551, "2026-09-14", 1692, 37046.4, heading=h, order=1022723)
+    det = {20517: LINES(("6201", "x", -10, 10)), 20550: LINES(("6201", "x", -10, 10))}
+    r = {x["credit_note"]: x for x in cx.classify([c1, c2], [i1, c1, i2, c2, i3], det)}
+    assert not r[20517]["over_credited"] and not r[20550]["over_credited"]
+    assert r[20550]["chain_net"] == 36012.19 and r[20550]["chain_documents"] == 5 and r[20550]["chain"] == "EB51"
+
+def test_chain_via_order_reference_when_headings_differ():
+    # credit carries 'Order no. #1021530' but a different heading than the invoice
+    i = INV(20002, "2026-07-24", 1692, 50313.6, heading="EB35 - Truck 26 - LIDL CW31", order=1021530)
+    c = INV(20513, "2026-09-10", 1692, -50313.6, heading="EB35 correction", text="Order no. #1021530")
+    c2 = INV(20599, "2026-09-12", 1692, -1000.0, heading="EB35 correction", text="Order no. #1021530")
+    r = {x["credit_note"]: x for x in cx.classify([c, c2], [i, c, c2], {})}
+    assert r[20599]["over_credited"] and r[20599]["chain_net"] == -1000.0
+
 def test_price_typo_correction():
     # real Dollarstore: 5760 x 2940 DKK invoiced instead of 2.94, credited and re-issued same day
     o = INV(19894, "2026-07-15", 2200, 16934400.0, heading="6498641", cur="DKK", rate=100)

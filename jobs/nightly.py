@@ -134,17 +134,17 @@ def credit_payload(weekly, rows, today=None):
     cr = sum(w["credits"] for w in weekly)
     if today:
         weekly = complete_weeks(weekly, today, key="period")
-    by_inv = {}
+    by_chain = {}
     for r in scope:
         if r["over_credited"]:
-            g = by_inv.setdefault(r["reverses_invoice"], {"customer": r["customer"], "date": r["date"],
-                                                          "reverses_invoice": r["reverses_invoice"],
-                                                          "amount_dkk": 0.0, "credit_notes": []})
+            g = by_chain.setdefault(r.get("chain") or r["reverses_invoice"], {
+                "customer": r["customer"], "date": r["date"], "chain": r.get("chain", ""),
+                "reverses_invoice": r["reverses_invoice"], "net": r.get("chain_net"),
+                "amount_dkk": 0.0, "credit_notes": []})
             g["amount_dkk"] += r["amount_dkk"]
             g["credit_notes"].append(r["credit_note"])
             g["date"] = max(g["date"], r["date"])
-    to_check = [{**g, "reason": (f"credited {len(g['credit_notes'])} times" if len(g["credit_notes"]) > 1
-                                 else "credited more than invoiced")} for g in by_inv.values()]
+    to_check = [{**g, "reason": "credited more than invoiced"} for g in by_chain.values()]
     return {"headline": {"credit_pct": pct(cr, inv), "credits": cr, "invoices": inv},
             "weekly": [{"week": w["period"], "pct": w["credit_pct_count"], "credits": w["credits"],
                         "invoices": w["invoices"]} for w in weekly],
