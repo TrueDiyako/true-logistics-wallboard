@@ -39,24 +39,31 @@ the last good data stays on screen, and GitHub e-mails the repository owner.
    Nightly takes ~15 min the first time (it reads 3 months of TraceLink orders), a few minutes after that.
 6. **TV**: open the Vercel URL in the TV browser, full screen. `?d=3` pins one dashboard (for testing).
 
-## Hourly trigger (needed - GitHub's own schedule is unreliable)
+## Schedule (cron-job.org starts the jobs; GitHub free plan: 2,000 minutes/month)
 
-GitHub delays or drops scheduled runs when it is busy (on 5 Oct only 1 of 13 hourly runs
-started). The `live.yml` schedule stays as a backup; the reliable hourly start comes from a
-free external cron that presses "Run workflow" through GitHub's API:
+GitHub's own schedule delays or drops runs, so cron-job.org (free) presses "Run workflow":
+- **live-orders**: every 30 minutes 07:00-16:30, Monday-Friday (~1,320 min/month)
+- **nightly-kpis**: 06:15 Monday-Friday (~180 min/month). GitHub keeps a backup schedule
+  at ~07:20 that skips itself in seconds when the 06:15 run already succeeded.
+`live.yml` has no GitHub schedule, so nothing runs twice. Check the usage now and then:
+GitHub -> Settings -> Billing and plans -> Usage (Actions minutes).
 
+Setup:
 1. GitHub -> your avatar -> Settings -> Developer settings -> Personal access tokens ->
    **Fine-grained tokens -> Generate new token**. Name `wallboard-trigger`, expiry 1 year,
    Repository access: **Only select repositories -> true-logistics-wallboard**,
    Permissions -> Repository -> **Actions: Read and write**. Copy the token.
-2. cron-job.org (free account) -> **Create cronjob**:
-   - URL `https://api.github.com/repos/TrueDiyako/true-logistics-wallboard/actions/workflows/live.yml/dispatches`
-   - Schedule: every hour at minute 7, hours 6-18, Monday-Friday, time zone Europe/Copenhagen
-   - Advanced -> Request method **POST**, request body `{"ref":"main"}`, headers
-     `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`,
-     `X-GitHub-Api-Version: 2022-11-28`
-   - Save and click "Test run": the answer must be **204**, and a "Manually run" appears
-     under Actions -> live-orders within a minute.
+2. cron-job.org (free account) -> **Create cronjob**, twice:
+
+   | | live-orders | nightly-kpis |
+   |---|---|---|
+   | URL (`.../actions/workflows/<file>/dispatches`) | `https://api.github.com/repos/TrueDiyako/true-logistics-wallboard/actions/workflows/live.yml/dispatches` | same, with `nightly.yml` |
+   | Schedule (time zone Europe/Copenhagen) | Custom: minutes 0 and 30, hours 7-16, Mon-Fri | Custom: minute 15, hour 6, Mon-Fri |
+
+   Both: Advanced -> request method **POST**, request body `{"ref":"main"}`, headers
+   `Authorization: Bearer <token>`, `Accept: application/vnd.github+json`,
+   `X-GitHub-Api-Version: 2022-11-28`. Save, then "Test run": the answer must be **204** and
+   a "Manually run" appears under Actions within a minute.
 3. Renew the token before it expires (cron-job.org mails you when calls start failing).
 
 ## Recurring maintenance

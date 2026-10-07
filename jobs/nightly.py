@@ -193,7 +193,20 @@ def main(tl=None, graph=None, econ=None, today=None):
     return payload, h.publish({"graph_secret_expires": os.environ.get("GRAPH_SECRET_EXPIRES", "")})
 
 
+def already_done_today():
+    """True when tonight's run already published successfully (backup schedule skips)."""
+    rec = common.redis_get("lk:health:nightly") or {}
+    if not rec.get("ok") or not rec.get("at"):
+        return False
+    at = dt.datetime.fromisoformat(rec["at"])
+    return common.to_cph(at.astimezone(common.UTC)).date() == common.cph_now().date()
+
+
 if __name__ == "__main__":
+    import sys
+    if "--skip-if-done" in sys.argv and already_done_today():
+        print("Nightly KPIs already published today - backup run skipped.")
+        raise SystemExit(0)
     _, health = main()
     print(health)
     raise SystemExit(0 if health["ok"] else 1)

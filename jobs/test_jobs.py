@@ -271,6 +271,21 @@ def test_complete_weeks_and_credit_dedupe():
     assert len(c["to_check"]) == 1 and c["to_check"][0]["amount_dkk"] == -284000.0 and c["to_check"][0]["chain"] == "Delivery to Stiller"
     assert c["to_check"][0]["reason"] == "credited more than invoiced" and c["to_check"][0]["date"] == "2026-09-02"
 
+def test_nightly_backup_skips_when_done_today():
+    now = dt.datetime.now(common.UTC)
+    store = {"lk:health:nightly": {"ok": True, "at": now.isoformat()}}
+    orig = common.redis_get; common.redis_get = lambda k: store.get(k)
+    try:
+        assert nightly.already_done_today()
+        store["lk:health:nightly"]["ok"] = False                      # failed run -> backup must run
+        assert not nightly.already_done_today()
+        store["lk:health:nightly"] = {"ok": True, "at": (now - dt.timedelta(days=1)).isoformat()}
+        assert not nightly.already_done_today()                       # yesterday's -> run
+        store.clear()
+        assert not nightly.already_done_today()                       # nothing yet -> run
+    finally:
+        common.redis_get = orig
+
 def test_cph_now_is_naive_local():
     n = common.cph_now()
     assert n.tzinfo is None

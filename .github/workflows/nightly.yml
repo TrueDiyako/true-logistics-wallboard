@@ -1,7 +1,9 @@
 name: nightly-kpis
 on:
   schedule:
-    - cron: "15 1 * * *"          # 03:15 Copenhagen summer / 02:15 winter, every day
+    # Main start: cron-job.org Mon-Fri 06:15. This is only a backup an hour later; it
+    # skips itself in seconds when the 06:15 run already succeeded today.
+    - cron: "20 5 * * 1-5"        # 07:20 Copenhagen summer / 06:20 winter
   workflow_dispatch: {}
 concurrency: { group: nightly, cancel-in-progress: false }
 jobs:
@@ -40,4 +42,4 @@ jobs:
           KV_REST_API_URL= python test_production.py
           KV_REST_API_URL= python test_weclapp.py
       - name: Build KPIs and publish
-        run: python nightly.py
+        run: python nightly.py ${{ github.event_name == 'schedule' && '--skip-if-done' || '' }}

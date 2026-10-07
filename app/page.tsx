@@ -15,9 +15,13 @@ function warnings(d: Data | null, fetchFails: number): string[] {
   if (!d) return w;
   const n = d.health?.nightly, l = d.health?.live;
   const now = new Date();
-  const working = now.getDay() >= 1 && now.getDay() <= 5 && now.getHours() >= 7 && now.getHours() < 18;
-  if (hoursSince(n?.at) > 30) w.push("KPI graphs not updated for over a day (nightly job)");
-  if (working && hoursSince(l?.at) > 2.5) w.push("Order lists not updated for over 2 hours (live job)");
+  // updates run Mon-Fri: order lists every 30 min 07:00-16:30, KPIs at 06:15
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const weekday = now.getDay() >= 1 && now.getDay() <= 5;
+  if (weekday && mins >= 7 * 60 + 20 && mins <= 17 * 60 && hoursSince(l?.at) > 1.25)
+    w.push("Order lists not updated for over an hour (live job)");
+  if (weekday && mins >= 7 * 60 && hoursSince(n?.at) > 20)
+    w.push("KPI graphs not updated this morning (nightly job)");
   for (const h of [n, l]) for (const e of h?.errors || []) w.push(`${h.job}: ${e.section} failing`);
   const exp = n?.graph_secret_expires;
   if (exp) {
