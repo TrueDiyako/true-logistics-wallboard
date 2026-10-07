@@ -1,3 +1,4 @@
+import json
 import datetime as dt, json, os, shutil, tempfile, threading, csv
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import response_time_extract as rx
@@ -277,6 +278,29 @@ def test_reply_from_personal_mailbox_counts():
          M("p", "frederikke@truecompany.com", "2026-09-28T11:02:00Z", "SV: 4511864346 - DK", to=["order_ready@coop.dk"])]
     [w] = waits(t)
     assert w["answered"] and w["replied_by"] == "frederikke@truecompany.com"
+
+def test_graph_gzip_and_cut_off_page_is_fetched_again():
+    # real (7 Oct): a Graph page arrived cut off at 439 KB -> invalid JSON; must be re-fetched
+    import gzip
+    good = json.dumps({"value": [], "@odata.nextLink": None}).encode()
+    answers = [b'{"value": [{"id": "AAMk', gzip.compress(good)]
+    class R:
+        def __init__(s, b): s.b = b
+        def __enter__(s): return s
+        def __exit__(s, *a): pass
+        def read(s): return s.b
+    g = rx.Graph(); g._auth = lambda: "tok"
+    orig, sleep = rx.urllib.request.urlopen, rx.time.sleep
+    rx.urllib.request.urlopen, rx.time.sleep = (lambda req, timeout=120: R(answers.pop(0))), (lambda s: None)
+    try:
+        assert g.get("https://graph/x") == {"value": [], "@odata.nextLink": None} and answers == []
+        answers[:] = [b"{broken"] * 5
+        try:
+            g.get("https://graph/x"); assert False
+        except RuntimeError as e:
+            assert "unreadable after 5 tries" in str(e)
+    finally:
+        rx.urllib.request.urlopen, rx.time.sleep = orig, sleep
 
 def test_reg_domain():
     assert rx.reg_domain("purchase@mg.firtal.com") == "firtal.com"

@@ -77,6 +77,26 @@ def test_clear_error_on_bad_token():
     finally:
         w.urllib.request.urlopen = orig
 
+def test_gzip_answer_and_retry_on_cut_off_answer():
+    # real (7 Oct): weclapp answers gzip-compressed even unasked -> body starts with 1f 8b
+    import gzip
+    body = json.dumps({"result": [WECLAPP[0]]}).encode()
+    answers = [b'{"result": [{"orderNumber": "46', gzip.compress(body)]      # first cut off, then fine
+    class R:
+        def __init__(s, b): s.b = b
+        def __enter__(s): return s
+        def __exit__(s, *a): pass
+        def read(s): return s.b
+    def fake(req, timeout=60):
+        assert req.headers["Accept-encoding"] == "gzip"; return R(answers.pop(0))
+    orig, sleep = w.urllib.request.urlopen, w.time.sleep
+    w.urllib.request.urlopen, w.time.sleep = fake, (lambda s: None)
+    try:
+        res = w.Weclapp("https://x", "tok").get("salesOrder", {})
+    finally:
+        w.urllib.request.urlopen, w.time.sleep = orig, sleep
+    assert res["result"][0]["orderNumber"] == "4667" and answers == []
+
 if __name__ == "__main__":
     import traceback
     fails = 0

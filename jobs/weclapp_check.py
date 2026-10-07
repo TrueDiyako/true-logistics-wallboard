@@ -48,16 +48,21 @@ class Weclapp:
 
     def get(self, path, params):
         url = f"{self.base}/{path}?{urllib.parse.urlencode(params)}"
-        req = urllib.request.Request(url, headers={"AuthenticationToken": self.token, "Accept": "application/json"})
+        req = urllib.request.Request(url, headers={"AuthenticationToken": self.token, "Accept": "application/json",
+                                                   "Accept-Encoding": "gzip"})
         for attempt in range(3):
             try:
                 with urllib.request.urlopen(req, timeout=60) as r:
-                    return json.loads(r.read() or b"{}")
+                    return common.decode_json(r.read())      # weclapp answers gzip-compressed
             except urllib.error.HTTPError as e:
                 if e.code == 429 or e.code >= 500:
                     time.sleep(3 * (attempt + 1))
                     continue
                 raise RuntimeError(f"weclapp HTTP {e.code}: {e.read()[:200]!r}")
+            except (ValueError, OSError):                   # cut-off / garbled answer: ask again
+                if attempt == 2:
+                    raise
+                time.sleep(3 * (attempt + 1))
         raise RuntimeError("weclapp: no answer after 3 attempts")
 
     def sales_orders_since(self, day):

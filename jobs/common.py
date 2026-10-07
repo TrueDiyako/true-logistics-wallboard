@@ -64,6 +64,15 @@ def redis_set(key, value):
         raise RuntimeError(f"Redis SET {key} failed: {res}")
 
 
+def decode_json(raw):
+    """JSON from an HTTP body that may arrive gzip-compressed (weclapp does this even
+    unasked: the body then starts with 1f 8b)."""
+    import gzip
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+    return json.loads(raw or b"{}")
+
+
 def redis_get(key):
     """GET key -> parsed JSON (None if missing or no credentials)."""
     if not REDIS_URL:

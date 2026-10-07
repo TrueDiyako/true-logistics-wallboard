@@ -154,6 +154,7 @@ for _k in ('TENANT_ID', 'CLIENT_ID', 'CLIENT_SECRET'):
 
 
 import csv
+import http.client
 import datetime as dt
 import json
 import os
@@ -198,10 +199,19 @@ class Graph:
         for attempt in range(retries):
             req = urllib.request.Request(url, headers={
                 "Authorization": f"Bearer {self._auth()}",
-                "Prefer": 'outlook.body-content-type="text"'})
+                "Prefer": 'outlook.body-content-type="text"',
+                "Accept-Encoding": "gzip"})
             try:
                 with urllib.request.urlopen(req, timeout=120) as r:
-                    return json.loads(r.read())
+                    raw = r.read()
+                import gzip
+                return json.loads(gzip.decompress(raw) if raw[:2] == b"\x1f\x8b" else raw)
+            except (ValueError, http.client.IncompleteRead, ConnectionError) as e:
+                # a page cut off in transit (seen on 7 Oct: invalid JSON at 439 KB): fetch it again
+                if attempt < retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise RuntimeError(f"Graph answer unreadable after {retries} tries: {e}") from None
             except urllib.error.HTTPError as e:
                 if e.code in (429, 500, 502, 503, 504) and attempt < retries - 1:
                     time.sleep(int(e.headers.get("Retry-After") or 2 ** attempt))
@@ -225,7 +235,7 @@ class Graph:
         box = urllib.parse.quote(mailbox or MAILBOX)
         base = f"{GRAPH_BASE}/users/{box}/" + (f"mailFolders/{folder}/messages" if folder else "messages")
         url = (base + "?"
-               + urllib.parse.urlencode({"$select": sel, "$filter": flt, "$top": "500"},
+               + urllib.parse.urlencode({"$select": sel, "$filter": flt, "$top": "100"},
                                        quote_via=urllib.parse.quote))   # spaces as %20, not +
         out = []
         while url:
