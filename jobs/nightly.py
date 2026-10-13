@@ -21,6 +21,7 @@ import response_time_extract as rx
 WINDOW_DAYS = 91           # 13 weeks
 RANK_POOL = 30             # rank within the 30 customers with most orders
 RANK_TOP = 10
+OUTSIDE_COPY_FROM = "2026-10-12"   # week 42: from here on order@ must be in copy
 
 
 def iso_week(d):
@@ -109,14 +110,16 @@ def response_payload(rows, today=None, tracelink_refs=None):
     unanswered = [r for r in kpi if not r["answered"]]
     processed = [r for r in unanswered if set(re.findall(r"\d{4,}", r["subject"] or "")) & refs]
     answered = [r for r in kpi if r["answered"]]
-    outside = [r for r in answered if r.get("without_order_copy")]
+    # "answered without order@ in copy": clean slate from week 42 (team told to copy order@)
+    outside_scope = [r for r in answered if str(r.get("received_local", ""))[:10] >= OUTSIDE_COPY_FROM]
+    outside = [r for r in outside_scope if r.get("without_order_copy")]
     by_person = {}
     for r in outside:
         p = r["replied_by"].split("@")[0].capitalize()
         by_person[p] = by_person.get(p, 0) + 1
     return {"bands": rx.BUCKET_ORDER,
-            "outside_copy": {"count": len(outside), "answered": len(answered),
-                             "pct": pct(len(outside), len(answered)),
+            "outside_copy": {"count": len(outside), "answered": len(outside_scope), "from": OUTSIDE_COPY_FROM,
+                             "pct": pct(len(outside), len(outside_scope)),
                              "by_person": sorted(by_person.items(), key=lambda x: -x[1])},
             "headline": {"within_1_day_pct": head.get("within 1 day %"),
                          "no_reply_pct": head.get("no reply %"), "waits": head.get("waits", 0)},

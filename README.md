@@ -98,6 +98,19 @@ Setup:
   shown under "Not ready".
 - **Dashboard 3 cards** show customer, TraceLink order number and the customer's order number
   (the TraceLink order name).
+- **Dashboard 1, AI adoption**: uses of the Claude skills tracelink-order-closeout, internal-purchase
+  and process-weclapp-order per ISO week from week 42 2026, counted from the log files in Google Drive
+  "Internal operations / Claude logs" (one file per use; the file owner is the colleague). Read hourly
+  with a Google service account: secret `GOOGLE_SERVICE_ACCOUNT_JSON`, and the folder shared with the
+  service account's e-mail as Viewer. Without the secret the panel says "not connected yet".
+- **Emails waiting / answered without order@ in copy** count from 12 Oct 2026 (clean slate after the
+  team was told to copy order@).
+- **Dashboard 5 actuals**: past days show what was produced, from the TraceLink production orders
+  named after the best-before date (production date + 18 months, e.g. "12/04-28 (US)"), output line
+  quantity. Until those are registered (next day, no fixed time) a past day shows its plan as
+  "awaiting registration". Reservations covered by produced goods show red "pending picking".
+- **Navigation**: tabs at the top (click a page name), ‹ › arrows, ❚❚ pause; arrow keys, 1-5 and space
+  also work. Choosing a page by hand holds the rotation for 10 minutes.
 - **Dashboard 2, weclapp orders not in TraceLink**: weclapp sales orders created from 6 Oct 2026
   (not cancelled, not the test customer) whose customer PO has no TraceLink order of True Company
   GmbH (1364). TraceLink is searched by "customer | PO" names and by POs listed in batch-order

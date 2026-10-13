@@ -22,6 +22,7 @@ import common
 import credit_notes_extract as cx
 import otif_extract as ox
 import production
+import skill_usage
 import weclapp_check
 import response_time_extract as rx
 
@@ -46,6 +47,7 @@ ACTION_DAYS = 3            # dashboard 2: due within 3 days
 BIGGEST_ROWS = 20
 EMAIL_LOOKBACK_DAYS = 14   # older unanswered mails are history, not today's to-do
 EMAIL_WAIT_BH = 8          # more than 1 business day
+EMAILS_FROM = "2026-10-12"  # clean slate: logistics copy order@ from week 42 on; older waits are dropped
 
 NOT_READY = "Not ready for warehouse"
 COLUMNS = [NOT_READY, "Partially ready for warehouse", "Ready for warehouse",
@@ -230,7 +232,8 @@ def build_due_not_ready(open_orders, names, today):
 
 
 def build_emails(rows):
-    w = [r for r in rows if r["in_kpi"] and not r["answered"] and r["business_hours"] > EMAIL_WAIT_BH]
+    w = [r for r in rows if r["in_kpi"] and not r["answered"] and r["business_hours"] > EMAIL_WAIT_BH
+         and str(r["received_local"])[:10] >= EMAILS_FROM]
     w.sort(key=lambda r: -r["business_hours"])
     day = rx.BUSINESS_END - rx.BUSINESS_START
     return [{"customer": r["customer"], "domain": r["customer_domain"], "subject": r["subject"][:80],
@@ -241,7 +244,7 @@ def build_emails(rows):
 
 
 # ----------------------------- main ----------------------------------------
-def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=None, weclapp=None):
+def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=None, weclapp=None, drive=None):
     today = today or common.cph_now().date()
     tl, econ, dachser = tl or ox.TraceLink(), econ or cx.Economic(), dachser or Dachser()
     h = common.Health("live")
@@ -287,6 +290,8 @@ def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=N
         rows, _ = rx.run(graph or rx.Graph())
         return build_emails(rows)
     payload["emails_waiting"] = h.section("emails", emails)
+    payload["ai_adoption"] = h.section("AI adoption (skill logs)", skill_usage.build,
+                                       drive or skill_usage.Drive(), today)
     payload["weclapp"] = h.section("weclapp vs TraceLink", weclapp_check.build,
                                    weclapp or weclapp_check.Weclapp(), tl, today)
 
@@ -301,14 +306,17 @@ def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=N
                     res.append({"sku": str(g.get("name") or "").strip(), "order": o["number"],
                                 "customer": names.get(str(o["customer_id"]), ""),
                                 "start": str(o.get("start_date") or "")[:10], "cases": round(q)})
-        return production.build((plan_source or production.download_plan)(), res, today)
+        monday = today - dt.timedelta(days=today.weekday())
+        past = [monday + dt.timedelta(days=i) for i in range(7) if monday + dt.timedelta(days=i) < today]
+        return production.build((plan_source or production.download_plan)(), res, today,
+                                production.fetch_actuals(tl, past))
     if orders:
         payload["production"] = h.section("production plan", plan)
 
     payload = {k: v for k, v in payload.items() if v is not None}
     common.keep_previous(payload, "lk:live",
                          ["status_board", "biggest", "biggest_summary", "due_not_ready", "emails_waiting", "production",
-                          "weclapp"])
+                          "weclapp", "ai_adoption"])
     payload["dachser_tracking"] = dachser.status
     payload["booking_warning"] = BOOKING_WARNING
     common.redis_set("lk:live", payload)

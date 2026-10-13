@@ -22,17 +22,19 @@ jobs:
       DACHSER_API_KEY_DK3: ${{ secrets.DACHSER_API_KEY_DK3 }}
       BOOKING_WARNING: ${{ vars.BOOKING_WARNING }}             # "1" = red "book now" on dashboard 4
       WECLAPP_TOKEN: ${{ secrets.WECLAPP_TOKEN }}              # weclapp API token (read only is enough)
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}   # reads the Claude skill logs
       KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
       KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
-      - run: pip install openpyxl==3.1.5
+      - run: pip install openpyxl==3.1.5 google-auth==2.35.0 requests==2.32.3
       - name: Tests
         run: |
           KV_REST_API_URL= python test_production.py
           KV_REST_API_URL= python test_weclapp.py
+          KV_REST_API_URL= python test_skill_usage.py
           KV_REST_API_URL= python test_jobs.py
       - name: Build order lists and publish
         run: python live.py

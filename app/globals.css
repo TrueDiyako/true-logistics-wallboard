@@ -101,3 +101,23 @@ header .meta { font-size: 1.1rem; color: var(--muted); }
 .al.free { color: var(--good); } .al.nodata { color: var(--bad); } .al.more2 { color: var(--muted); }
 .empty.small { font-size: .85rem; margin: .5vh 0; }
 .row .sub { display: block; font-size: .85rem; color: var(--muted); }
+.run.produced { border-color: #A9B78A; }
+.runstate { font-size: .72rem; color: var(--good); font-weight: 600; margin-top: .1vh; }
+.al.ready { color: var(--bad); font-weight: 600; }
+.al.ready .s { color: var(--bad); width: auto; white-space: nowrap; }
+
+/* page navigation: named tabs, arrows and pause - big enough for a mouse on a 50" screen */
+header { gap: 1.2vw; }
+header .title { flex: 0 1 auto; white-space: nowrap; }
+.tabs { display: flex; gap: .4vw; align-items: center; flex: 1; justify-content: center; }
+.tabs button { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--panel);
+  color: var(--ink); border-radius: 2vw; padding: .5vh 1vw; font-size: 1.05rem; line-height: 1.2; }
+.tabs button:hover { border-color: var(--muted); }
+.tabs .tab.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.tabs .arrow { font-size: 1.5rem; padding: .1vh .8vw; }
+.tabs .pause { min-width: 3vw; }
+.tabs .pause.on { background: var(--warn); color: #fff; border-color: var(--warn); }
+.meta .paused { color: var(--warn); font-weight: 600; }
+.tabs { justify-content: flex-start; }
+.tabs button { white-space: nowrap; font-size: 1.15rem; padding: .6vh 1.1vw; }
+.tabs .tab.on { font-weight: 600; }

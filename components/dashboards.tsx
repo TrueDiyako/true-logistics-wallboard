@@ -1,5 +1,6 @@
 import React from "react";
 import { LineChart, HBar, Legend } from "./charts";
+import { fmtDay, fmtDayNum, fmtDayMonth, fmtDayMonthLong, fmtNum, fmtOneDecimal } from "@/lib/fmt";
 
 export type Data = { kpi: any; live: any; health: any };
 type PanelFn = (d: Data) => React.ReactNode;
@@ -16,13 +17,10 @@ const BANDS = [
 ];
 
 const pct = (v: any) => (v == null ? "–" : `${Math.round(Number(v))}%`);
-const dkk = (v: any) => (v == null ? "–" : `${Math.round(Number(v) / 1000).toLocaleString("da-DK")}k`);
+const dkk = (v: any) => (v == null ? "–" : `${fmtNum(Number(v) / 1000)}k`);
 const money = (v: any) => (v == null ? "–" : Math.abs(Number(v)) >= 1e6
-  ? `${(Number(v) / 1e6).toLocaleString("en-GB", { maximumFractionDigits: 1 })}M` : dkk(v));
-const day = (s: string) => {
-  const d = new Date(s + "T12:00:00");
-  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-};
+  ? `${fmtOneDecimal(Number(v) / 1e6)}M` : dkk(v));
+const day = (s: string) => fmtDay(s);
 
 function Panel({ title, children, note }: { title: string; children: React.ReactNode; note?: string }) {
   return (
@@ -89,6 +87,30 @@ const shortsPanel: PanelFn = ({ kpi }) => {
         { label: "of orders have at least one short line", value: pct(s.orders_with_short_pct), color: C.inFull },
       ]} />
       <LineChart labels={w.map((x: any) => x.week)} series={[{ name: "Short", values: w.map((x: any) => x.pct), color: C.credit, width: 7 }]} />
+    </Panel>
+  );
+};
+
+// AI adoption: use of the three Claude skills, per week from week 42 (live job, skill logs on Drive)
+const SKILL_COLORS: Record<string, string> = {
+  "tracelink-order-closeout": "#5E6B2E", "internal-purchase": "#8C5B3E", "process-weclapp-order": "#C9922E" };
+const SKILL_LABEL: Record<string, string> = {
+  "tracelink-order-closeout": "order closeouts", "internal-purchase": "internal purchases",
+  "process-weclapp-order": "weclapp orders" };
+const aiPanel: PanelFn = ({ live }) => {
+  const a = live?.ai_adoption;
+  if (!a) return <Panel title="AI adoption"><Missing /></Panel>;
+  if (!a.connected) return <Panel title="AI adoption" note="Claude skills"><div className="missing">Skill log not connected yet</div></Panel>;
+  const w = a.weekly || [];
+  const people = (a.people_this_week || []).map((p: any) => `${p[0]} ${p[1]}`).join(" · ");
+  return (
+    <Panel title="AI adoption" note="uses of the Claude skills · this week and per week">
+      <Headlines items={a.skills.map((s: string) => ({ label: SKILL_LABEL[s] || s,
+                                                      value: String(a.this_week[s] ?? 0), color: SKILL_COLORS[s] }))} />
+      <LineChart count labels={w.map((x: any) => x.week)}
+                 series={a.skills.map((s: string, i: number) => ({ name: s, values: w.map((x: any) => x[s]),
+                                                                    color: SKILL_COLORS[s], width: i === 0 ? 7 : 5 }))} />
+      {people && <div className="notes"><span>This week: {people}</span></div>}
     </Panel>
   );
 };
@@ -205,7 +227,7 @@ const customersPanel: PanelFn = ({ kpi }) => {
 const weclappPanel: PanelFn = ({ live }) => {
   const w = live?.weclapp;
   if (!w) return <Panel title="weclapp orders not in TraceLink"><Missing /></Panel>;
-  const since = new Date(w.tracking_from + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const since = fmtDayMonth(w.tracking_from);
   return (
     <Panel title="weclapp orders not in TraceLink" note={`created from ${since}`}>
       <Headlines items={[{ label: `of ${w.orders} weclapp orders${w.no_po ? ` · ${w.no_po} without PO` : ""}`,
@@ -286,6 +308,7 @@ const biggest: PanelFn = ({ live }) => {
 };
 
 // ---------------- dashboard 5: production plan ----------------
+const RUN_NOTE: Record<string, string> = { produced: "produced", "awaiting registration": "plan · awaiting registration" };
 const productionLine = (name: string, p: any) => {
   const runs = (p.lines || {})[name] || [];
   return (
@@ -295,21 +318,25 @@ const productionLine = (name: string, p: any) => {
           const today = runs.filter((r: any) => r.day === d);
           return (
             <div className="pcol" key={d}>
-              <h3>{new Date(d + "T12:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "numeric" })}</h3>
+              <h3>{fmtDayNum(d)}</h3>
               {today.length === 0 && <div className="empty small">no production</div>}
               {today.map((r: any, i: number) => (
-                <div className="run" key={i}>
-                  <div className="runhead"><b>{r.flavour}</b><span className="lang">{r.lang}</span>
-                    <span className="sku">{r.cases.toLocaleString("da-DK")} cs</span></div>
+                <div className={"run" + (r.status === "produced" ? " produced" : "")} key={i}>
+                  <div className="runhead"><b>{r.flavour}</b>{r.lang && <span className="lang">{r.lang}</span>}
+                    <span className="sku">{fmtNum(r.cases)} cs</span></div>
+                  {r.status && r.status !== "planned" && (
+                    <div className="runstate">{RUN_NOTE[r.status] || r.status}
+                      {r.status === "produced" && r.planned_cases ? ` · plan ${fmtNum(r.planned_cases)}` : ""}
+                      {r.unplanned ? " · not in the plan" : ""}</div>)}
                   {!r.sku && <div className="al nodata">Unknown article</div>}
                   {r.alloc.map((a: any, j: number) => (
-                    <div className="al" key={j}><span className="grow">{a.customer}</span>
-                      <span className="q">{a.cases.toLocaleString("da-DK")}{a.cases === a.of ? "" : ` of ${a.of.toLocaleString("da-DK")}`}</span>
-                      <span className="s">{day(a.start)}</span></div>
+                    <div className={"al" + (a.ready ? " ready" : "")} key={j}><span className="grow">{a.customer}</span>
+                      <span className="q">{fmtNum(a.cases)}{a.cases === a.of ? "" : ` of ${fmtNum(a.of)}`}</span>
+                      <span className="s">{a.ready ? "pending picking" : day(a.start)}</span></div>
                   ))}
                   {r.more > 0 && <div className="al more2">+ {r.more} more orders</div>}
                   {r.free > 0 && <div className="al free"><span className="grow">Not yet allocated</span>
-                    <span className="q">{r.free.toLocaleString("da-DK")}</span><span className="s" /></div>}
+                    <span className="q">{fmtNum(r.free)}</span><span className="s" /></div>}
                 </div>
               ))}
             </div>
@@ -323,11 +350,11 @@ const productionLine = (name: string, p: any) => {
 const productionPlan: PanelFn = ({ live }) => {
   const p = live?.production;
   if (!p) return <Panel title="Production plan"><Missing /></Panel>;
-  const mon = new Date(p.monday + "T12:00:00"), fri = new Date(mon.getTime() + 4 * 864e5);
-  const f = (x: Date) => x.toLocaleDateString("en-GB", { day: "numeric", month: "long" });
+  const fri = new Date(Date.UTC(+p.monday.slice(0, 4), +p.monday.slice(5, 7) - 1, +p.monday.slice(8, 10) + 4))
+    .toISOString().slice(0, 10);
   return (
     <div className="prodwrap">
-      <div className="weekbanner">Week {p.week} · {f(mon)} – {f(fri)} · new production only, cases (bags ÷ 12) allocated to open reservations by start date</div>
+      <div className="weekbanner">Week {p.week} · {fmtDayMonthLong(p.monday)} – {fmtDayMonthLong(fri)}</div>
       {productionLine("Laudenberg", p)}
       {productionLine("Bossar", p)}
     </div>
@@ -335,20 +362,20 @@ const productionPlan: PanelFn = ({ live }) => {
 };
 
 // ---------------- rotation config ----------------
-export type Dashboard = { id: string; title: string; seconds: number; layout: string; columns: string;
+export type Dashboard = { id: string; title: string; tab: string; seconds: number; layout: string; columns: string;
                           rows: string; panels: Record<string, PanelFn> };
 
 export const DASHBOARDS: Dashboard[] = [
-  { id: "performance", title: "How are we doing", seconds: 300,
+  { id: "performance", tab: "Performance", title: "How are we doing", seconds: 300,
     layout: `"otif shorts" "reply credit"`, columns: "1fr 1fr", rows: "1fr 1fr",
-    panels: { otif: otifPanel, shorts: shortsPanel, reply: responsePanel, credit: creditPanel } },
-  { id: "action", title: "What needs doing now", seconds: 300,
+    panels: { otif: otifPanel, shorts: aiPanel, reply: responsePanel, credit: creditPanel } },
+  { id: "action", tab: "Action now", title: "What needs doing now", seconds: 300,
     layout: `"emails due customers" "emails credits customers"`, columns: "1.1fr 1.35fr 0.95fr", rows: "1fr 1fr",
     panels: { emails: emailsPanel, due: duePanel, credits: creditsCheckPanel, customers: weclappPanel } },
-  { id: "status", title: "Open orders by status", seconds: 300,
+  { id: "status", tab: "Order status", title: "Open orders by status", seconds: 300,
     layout: `"board"`, columns: "1fr", rows: "1fr", panels: { board: statusBoard } },
-  { id: "biggest", title: "Biggest open orders", seconds: 300,
+  { id: "biggest", tab: "Biggest orders", title: "Biggest open orders", seconds: 300,
     layout: `"big"`, columns: "1fr", rows: "1fr", panels: { big: biggest } },
-  { id: "production", title: "Production plan", seconds: 300,
+  { id: "production", tab: "Production", title: "Production plan", seconds: 300,
     layout: `"prod"`, columns: "1fr", rows: "1fr", panels: { prod: productionPlan } },
 ];

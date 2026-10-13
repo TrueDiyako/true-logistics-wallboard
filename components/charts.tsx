@@ -6,17 +6,23 @@ const weekLabel = (w: string) => (w.includes("-W") ? "W" + w.split("-W")[1] : w)
 
 export type Series = { name: string; values: (number | null)[]; color: string; width?: number };
 
-export function LineChart({ labels, series, height = H0 }: { labels: string[]; series: Series[]; height?: number }) {
+// default: 0-100 %; with `count` the axis runs 0..(a round max above the data) without "%"
+export function LineChart({ labels, series, height = H0, count = false }:
+  { labels: string[]; series: Series[]; height?: number; count?: boolean }) {
   const H = height;
+  const dataMax = Math.max(1, ...series.flatMap((s) => s.values.filter((v) => v != null) as number[]));
+  const step = count ? Math.max(1, Math.ceil(dataMax / 4 / (dataMax > 20 ? 5 : 1)) * (dataMax > 20 ? 5 : 1)) : 25;
+  const top = count ? step * 4 : 100;
+  const unit = count ? "" : "%";
   const n = Math.max(labels.length, 1);
   const x = (i: number) => L + (n === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (n - 1));
-  const y = (v: number) => T + (1 - v / 100) * (H - T - B);
+  const y = (v: number) => T + (1 - v / top) * (H - T - B);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img">
-      {[0, 25, 50, 75, 100].map((g) => (
+      {[0, 1, 2, 3, 4].map((i) => i * (top / 4)).map((g) => (
         <g key={g}>
           <line x1={L} x2={W - R} y1={y(g)} y2={y(g)} className="grid" />
-          <text x={L - 12} y={y(g) + 8} className="axis" textAnchor="end">{g}%</text>
+          <text x={L - 12} y={y(g) + 8} className="axis" textAnchor="end">{g}{unit}</text>
         </g>
       ))}
       {labels.map((l, i) => (
@@ -41,7 +47,7 @@ export function LineChart({ labels, series, height = H0 }: { labels: string[]; s
             {pts.map((p, i) => p && <circle key={i} cx={p[0]} cy={p[1]} r={(s.width || 5) + 1} fill={s.color} />)}
             {lastIdx !== undefined && (
               <text x={x(lastIdx) + 12} y={y(s.values[lastIdx] as number) + 9}
-                    className="pointlabel" fill={s.color}>{Math.round(s.values[lastIdx] as number)}%</text>
+                    className="pointlabel" fill={s.color}>{Math.round(s.values[lastIdx] as number)}{unit}</text>
             )}
           </g>
         );

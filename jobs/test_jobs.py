@@ -86,7 +86,9 @@ def test_due_not_ready():
 
 def test_emails():
     rows = [{"in_kpi": True, "answered": False, "business_hours": 20, "customer": "a@x.dk", "customer_domain": "x.dk",
-             "subject": "PO 1", "received_local": "2026-09-30 09:00"},
+             "subject": "PO 1", "received_local": "2026-10-12 09:00"},
+            {"in_kpi": True, "answered": False, "business_hours": 90, "customer": "old@x.dk", "customer_domain": "x.dk",
+             "subject": "before the clean slate", "received_local": "2026-10-09 09:00"},
             {"in_kpi": True, "answered": False, "business_hours": 4, "customer": "b@y.dk", "customer_domain": "y.dk",
              "subject": "PO 2", "received_local": "2026-10-02 08:00"},
             {"in_kpi": True, "answered": True, "business_hours": 50, "customer": "c@z.dk", "customer_domain": "z.dk",
@@ -175,6 +177,7 @@ def test_live_main_end_to_end():
     rx.run = lambda g: ([], [])
     try:
         payload, health = live.main(tl=FakeTL(), econ=FakeEcon(), graph=object(), dachser=FakeDachser(), today=TODAY,
+                                    drive=__import__("test_skill_usage").FakeDrive([]),
                                     weclapp=__import__("test_weclapp").FakeWeclapp([__import__("test_weclapp").WECLAPP]),
                                     plan_source=__import__("test_production").plan_xlsx)
     finally:
@@ -195,6 +198,7 @@ def test_live_failure_keeps_previous_section():
     orig_run = rx.run; rx.run = boom
     try:
         payload, health = live.main(tl=FakeTL(), econ=FakeEcon(), graph=object(), dachser=FakeDachser(), today=TODAY,
+                                    drive=__import__("test_skill_usage").FakeDrive([]),
                                     weclapp=__import__("test_weclapp").FakeWeclapp([__import__("test_weclapp").WECLAPP]),
                                     plan_source=__import__("test_production").plan_xlsx)
     finally:
@@ -254,9 +258,19 @@ def test_nightly_main_with_fakes():
     assert r["trend"][-1] == {"week": "2026-W39", "pct": 33.3, "waits": 3}
     assert r["last4"]["no reply"] == 66.7 and r["last4"]["waits"] == 3
     assert "shorts" in k and "dispatch" not in k
-    assert r["outside_copy"] == {"count": 0, "answered": 1, "pct": 0.0, "by_person": []}
+    assert r["outside_copy"] == {"count": 0, "answered": 0, "from": "2026-10-12", "pct": None, "by_person": []}   # Sep mails: before the clean slate
+
     assert k["credit"]["headline"]["credit_pct"] == 20.0 and k["credit"]["to_check"][0]["reason"] == "credited more than invoiced"
     assert k["credit"]["weekly"] == []                                   # W40 is the running week
+
+def test_outside_copy_counts_from_week_42_only():
+    rows = [{"in_kpi": True, "answered": True, "business_hours": 2, "received_local": d, "subject": "PO",
+             "without_order_copy": oc, "replied_by": who}
+            for d, oc, who in (("2026-10-09 09:00", True, "andreas@truecompany.com"),     # before: ignored
+                               ("2026-10-12 09:00", True, "valentina@truecompany.com"),
+                               ("2026-10-13 09:00", False, "order@truecompany.com"))]
+    oc = nightly.response_payload(rows, TODAY)["outside_copy"]
+    assert oc["count"] == 1 and oc["answered"] == 2 and oc["pct"] == 50.0 and oc["by_person"] == [("Valentina", 1)]
 
 def test_complete_weeks_and_credit_dedupe():
     rows = [{"week": f"2026-W{w:02d}"} for w in range(20, 41)]

@@ -7,10 +7,17 @@ Plan:      "Production plan and Data.xlsx" on Google Drive (shared by link), tab
            Date | Flavor 1 | Foil 1 | Units 1 | Flavor 2 | ... (units = bags, 12 per case).
            Comment columns are not read.
 SKU:       language prefix + flavour code, e.g. Sour Watermelon CZ/SK -> 6206.
+Actuals:   once a day is past, its planned quantities are replaced by what was actually
+           produced: TraceLink production orders are named after the best-before date
+           (production date + 18 months: 12 Oct 2026 -> "12/04-28 (US)"); their output line
+           (output_product = 1) gives the article and unit_order_produced_f (cases). They are
+           registered the next day at no fixed time, so a past day without them keeps its plan
+           and shows "awaiting registration".
 Allocate:  per SKU, production in date order (machine doesn't matter) covers open
            reservations (TraceLink unit_order_reserved_f) in start-date order. Current
            stock is ignored - this is only about new production. Shipped and internal
-           orders are skipped.
+           orders are skipped. Reservations covered by goods already produced are marked
+           "ready - pending picking".
 """
 import datetime as dt
 import io
@@ -28,6 +35,60 @@ FLAVOUR_CODE = {"sour cola": "01", "sweet peach": "02", "cookie dough": "03", "p
                 "salty liquorice": "05", "sour watermelon": "06", "sour apple": "07", "cinnamon roll": "08",
                 "pistachio cream": "09", "caramel popcorn": "10", "banana caramel": "11",
                 "sour pineapple": "12", "crunchy coconut": "13"}
+
+
+BBD_MONTHS = 18
+
+
+def bbd_name(day):
+    """Production day -> the BBD prefix of its production orders: 2026-10-12 -> '12/04-28'."""
+    import calendar
+    y, m = day.year + (day.month - 1 + BBD_MONTHS) // 12, (day.month - 1 + BBD_MONTHS) % 12 + 1
+    d = min(day.day, calendar.monthrange(y, m)[1])
+    return f"{d:02d}/{m:02d}-{y % 100:02d}"
+
+
+def fetch_actuals(tl, days):
+    """{(day iso, sku): cases produced} for the given production days, from TraceLink."""
+    out = {}
+    for day in days:
+        prefix = bbd_name(day)
+        for o in tl.list_orders({"name": f"{prefix}%"}):
+            if o.get("delete_dt") or not str(o.get("name", "")).startswith(prefix + " ("):
+                continue
+            for g in tl.module("genobj", o["order_id"]):
+                if str(g.get("output_product")) != "1":
+                    continue
+                q = float(g.get("unit_order_produced_f") or 0)
+                if q > 0:
+                    key = (day.isoformat(), str(g.get("name") or "").strip())
+                    out[key] = out.get(key, 0) + round(q)
+    return out
+
+
+def apply_actuals(runs, actuals, today):
+    """Past days: planned cases -> produced cases (split over that day's runs of the same SKU
+    in proportion to plan). Produced articles that weren't planned are added as extra runs."""
+    seen = set()
+    for r in runs:
+        r["planned_cases"] = r["cases"]
+        if r["day"] >= today.isoformat():
+            r["status"] = "planned"
+            continue
+        key = (r["day"], r["sku"])
+        if key not in actuals:
+            r["status"] = "awaiting registration"
+            continue
+        same = [x for x in runs if (x["day"], x["sku"]) == key]
+        plan_total = sum(x["planned_cases"] if "planned_cases" in x else x["cases"] for x in same) or 1
+        r["cases"] = round(actuals[key] * r["planned_cases"] / plan_total)
+        r["status"] = "produced"
+        seen.add(key)
+    for (day, sku), q in actuals.items():
+        if (day, sku) not in seen and day < today.isoformat():
+            runs.append({"line": LINES[0], "day": day, "flavour": f"Article {sku}", "lang": "", "bags": 0,
+                         "cases": q, "planned_cases": 0, "sku": sku, "status": "produced", "unplanned": True})
+    return runs
 
 
 def download_plan(url=PLAN_URL):
@@ -126,7 +187,8 @@ def allocate(runs, reservations):
             if x["left"] <= 0:
                 continue
             take = min(cap, x["left"])
-            rows.append({"customer": x["customer"], "cases": take, "of": x["cases"], "start": x["start"]})
+            rows.append({"customer": x["customer"], "cases": take, "of": x["cases"], "start": x["start"],
+                         "ready": run.get("status") == "produced"})
             x["left"] -= take
             cap -= take
         out.append(dict(run, alloc=rows[:MAX_ROWS_PER_RUN], more=max(0, len(rows) - MAX_ROWS_PER_RUN),
@@ -134,9 +196,10 @@ def allocate(runs, reservations):
     return out
 
 
-def build(plan_bytes, reservations, today):
+def build(plan_bytes, reservations, today, actuals=None):
     monday = today - dt.timedelta(days=today.weekday())
-    runs = allocate(parse_plan(plan_bytes, monday), reservations)
+    runs = apply_actuals(parse_plan(plan_bytes, monday), actuals or {}, today)
+    runs = allocate(runs, reservations)
     days = [(monday + dt.timedelta(days=i)).isoformat() for i in range(7)]
     used = [d for i, d in enumerate(days) if i < 5 or any(r["day"] == d for r in runs)]
     iso = monday.isocalendar()

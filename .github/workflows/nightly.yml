@@ -41,5 +41,6 @@ jobs:
           KV_REST_API_URL= python test_jobs.py
           KV_REST_API_URL= python test_production.py
           KV_REST_API_URL= python test_weclapp.py
+          KV_REST_API_URL= python test_skill_usage.py
       - name: Build KPIs and publish
         run: python nightly.py ${{ github.event_name == 'schedule' && '--skip-if-done' || '' }}

@@ -65,6 +65,57 @@ def test_not_excel_is_a_clear_error():
     finally:
         p.urllib.request.urlopen = orig
 
+def test_bbd_names():
+    assert p.bbd_name(dt.date(2026, 10, 12)) == "12/04-28"          # real: Monday's production orders
+    assert p.bbd_name(dt.date(2026, 8, 31)) == "29/02-28"           # no 31 Feb -> last day of month
+
+class FakeTLProd:
+    # real (13 Oct 2026): production orders for Monday 12 Oct, registered on Tuesday
+    ORDERS = {"12/04-28%": [
+        {"order_id": "1333701", "name": "12/04-28 (US)", "delete_dt": None},
+        {"order_id": "1333706", "name": "12/04-28 (CZ/SK/RO/PL/HU/SI/HR/BA/BG)", "delete_dt": None},
+        {"order_id": "1333799", "name": "12/04-28 (US) old", "delete_dt": "2026-10-13"}]}
+    LINES = {"1333701": [{"name": "6606", "output_product": "1", "unit_order_produced_f": "439.000000"},
+                         {"name": "5.15.06.01", "output_product": "0", "unit_order_produced_f": "0"}],
+             "1333706": [{"name": "6206", "output_product": "1", "unit_order_produced_f": "3600.000000"}]}
+    def list_orders(self, f): return self.ORDERS.get(f["name"], [])
+    def module(self, m, oid): return self.LINES.get(oid, [])
+
+def test_actuals_from_production_orders():
+    a = p.fetch_actuals(FakeTLProd(), [dt.date(2026, 10, 12)])
+    assert a == {("2026-10-12", "6606"): 439, ("2026-10-12", "6206"): 3600}
+
+def plan_42():
+    wb = openpyxl.Workbook(); wb.remove(wb.active)
+    hdr = ["Date"] + [f"{k} {i}" for i in range(1, 6) for k in ("Flavor", "Foil", "Units")]
+    L = wb.create_sheet("Production Plan Laudenberg"); L.append(hdr)
+    L.append([dt.datetime(2026, 10, 12), "Sour Watermelon", "US", 6000, "Sour Watermelon", "CZ/SK/RO/PL", 45000])
+    L.append([dt.datetime(2026, 10, 14), "Banana Caramel", "CZ/SK/RO/PL", 80000])
+    B = wb.create_sheet("Production Plan Bossar"); B.append(hdr)
+    B.append([dt.datetime(2026, 10, 12), "Sour Apple", "CZ/SK/RO/PL", 12000])
+    f = io.BytesIO(); wb.save(f); return f.getvalue()
+
+def test_past_days_show_actual_and_ready_pending_picking():
+    res = [{"sku": "6606", "order": "1", "customer": "BEBIDAS", "start": "2026-11-03", "cases": 20},
+           {"sku": "6206", "order": "2", "customer": "EUROBRANDS", "start": "2026-10-22", "cases": 420},
+           {"sku": "6211", "order": "3", "customer": "EUROBRANDS", "start": "2026-10-22", "cases": 3402}]
+    actuals = p.fetch_actuals(FakeTLProd(), [dt.date(2026, 10, 12)])
+    out = p.build(plan_42(), res, dt.date(2026, 10, 13), actuals)
+    L, B = out["lines"]["Laudenberg"], out["lines"]["Bossar"]
+    us = L[0]
+    assert us["status"] == "produced" and us["planned_cases"] == 500 and us["cases"] == 439
+    assert us["alloc"][0]["ready"] and us["free"] == 419
+    cz = L[1]
+    assert cz["status"] == "produced" and cz["cases"] == 3600 and cz["alloc"][0]["ready"]
+    assert B[0]["status"] == "awaiting registration" and B[0]["cases"] == 1000 and not any(a["ready"] for a in B[0]["alloc"])
+    bc = L[2]                                                   # Wednesday: still the plan
+    assert bc["status"] == "planned" and bc["cases"] == 6666 and not bc["alloc"][0]["ready"]
+
+def test_unplanned_production_is_shown():
+    out = p.build(plan_42(), [], dt.date(2026, 10, 13), {("2026-10-12", "6309"): 250})
+    extra = [r for r in out["lines"]["Laudenberg"] if r.get("unplanned")]
+    assert len(extra) == 1 and extra[0]["cases"] == 250 and extra[0]["sku"] == "6309"
+
 if __name__ == "__main__":
     import traceback
     fails = 0

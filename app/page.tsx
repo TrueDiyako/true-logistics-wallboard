@@ -1,6 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import { DASHBOARDS, Data } from "@/components/dashboards";
+import { fmtClockDate, fmtTime } from "@/lib/fmt";
 
 const REFRESH_MS = 5 * 60 * 1000;          // data
 const RELOAD_MS = 6 * 60 * 60 * 1000;      // full page reload (picks up new deployments)
@@ -31,11 +32,14 @@ function warnings(d: Data | null, fetchFails: number): string[] {
   return w;
 }
 
+const PAUSE_MS = 10 * 60 * 1000;            // a manual page choice holds rotation for 10 minutes
+
 export default function Wallboard() {
   const [data, setData] = useState<Data | null>(null);
   const [fails, setFails] = useState(0);
   const [idx, setIdx] = useState(0);
   const [now, setNow] = useState(new Date());
+  const [pausedUntil, setPausedUntil] = useState(0);   // 0 = rotating, Infinity = paused until resumed
   const pinned = useRef<number | null>(null);
 
   useEffect(() => {
@@ -50,42 +54,57 @@ export default function Wallboard() {
     };
     load();
     const a = setInterval(load, REFRESH_MS);
-    const b = setInterval(() => setNow(new Date()), 30 * 1000);
+    const b = setInterval(() => setNow(new Date()), 15 * 1000);
     const c = setTimeout(() => window.location.reload(), RELOAD_MS);
     return () => { clearInterval(a); clearInterval(b); clearTimeout(c); };
   }, []);
 
-  // manual navigation: arrow keys (also most TV remotes) or click a dot
+  // go to a page by hand: rotation waits 10 minutes, then carries on from there
+  const go = (i: number) => { setIdx((i + DASHBOARDS.length) % DASHBOARDS.length); setPausedUntil((p) => (p === Infinity ? p : Date.now() + PAUSE_MS)); };
+  const togglePause = () => setPausedUntil((p) => (p === Infinity || p > Date.now() ? 0 : Infinity));
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowRight" || e.key === "PageDown") setIdx((i) => (i + 1) % DASHBOARDS.length);
-      if (e.key === "ArrowLeft" || e.key === "PageUp") setIdx((i) => (i - 1 + DASHBOARDS.length) % DASHBOARDS.length);
+      if (e.key === "ArrowRight" || e.key === "PageDown") go(idx + 1);
+      if (e.key === "ArrowLeft" || e.key === "PageUp") go(idx - 1);
+      if (e.key === " ") { e.preventDefault(); togglePause(); }
       const n = Number(e.key);
-      if (n >= 1 && n <= DASHBOARDS.length) setIdx(n - 1);
+      if (n >= 1 && n <= DASHBOARDS.length) go(n - 1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  });
 
+  const paused = pinned.current !== null || pausedUntil === Infinity || pausedUntil > now.getTime();
   useEffect(() => {
     if (pinned.current !== null) return;
-    const t = setTimeout(() => setIdx((i) => (i + 1) % DASHBOARDS.length), DASHBOARDS[idx].seconds * 1000);
+    const wait = Math.max(DASHBOARDS[idx].seconds * 1000, pausedUntil > Date.now() && pausedUntil !== Infinity ? pausedUntil - Date.now() : 0);
+    if (pausedUntil === Infinity) return;
+    const t = setTimeout(() => { setPausedUntil(0); setIdx((i) => (i + 1) % DASHBOARDS.length); }, wait);
     return () => clearTimeout(t);
-  }, [idx]);
+  }, [idx, pausedUntil]);
 
   const dash = DASHBOARDS[idx];
   const warn = warnings(data, fails);
   const updated = data?.live?.generated_at || data?.kpi?.generated_at;
+  const resumeAt = pausedUntil !== Infinity && pausedUntil > now.getTime() ? fmtTime(new Date(pausedUntil)) : "";
 
   return (
     <main className="wall">
       <header>
-        <div className="title">Logistics · {dash.title}</div>
-        <div className="dots">{DASHBOARDS.map((d, i) => <i key={d.id} title={d.title} className={i === idx ? "on" : ""} onClick={() => setIdx(i)} />)}</div>
+        <nav className="tabs">
+          <button className="arrow" onClick={() => go(idx - 1)} aria-label="Previous page">‹</button>
+          {DASHBOARDS.map((d, i) => (
+            <button key={d.id} className={"tab" + (i === idx ? " on" : "")} onClick={() => go(i)}>{d.tab}</button>
+          ))}
+          <button className="arrow" onClick={() => go(idx + 1)} aria-label="Next page">›</button>
+          <button className={"pause" + (paused ? " on" : "")} onClick={togglePause}
+                  title={paused ? "Resume rotation" : "Pause rotation"}>{paused ? "▶" : "❚❚"}</button>
+        </nav>
         <div className="meta">
-          {updated && <>updated {new Date(updated).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })} · </>}
-          {now.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}{" "}
-          {now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+          {paused && <span className="paused">{pausedUntil === Infinity ? "paused" : resumeAt ? `rotation resumes ${resumeAt}` : "pinned"} · </span>}
+          {updated && <>updated {fmtTime(new Date(updated))} · </>}
+          {fmtClockDate(now)} {fmtTime(now)}
         </div>
       </header>
       {warn.length > 0 && <div className="banner">{warn.join("  ·  ")}</div>}
