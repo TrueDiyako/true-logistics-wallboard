@@ -22,10 +22,12 @@ const money = (v: any) => (v == null ? "–" : Math.abs(Number(v)) >= 1e6
   ? `${fmtOneDecimal(Number(v) / 1e6)}M` : dkk(v));
 const day = (s: string) => fmtDay(s);
 
-function Panel({ title, children, note }: { title: string; children: React.ReactNode; note?: string }) {
+function Panel({ title, children, note, badge, badgeBad, compact }:
+  { title: string; children: React.ReactNode; note?: string; badge?: string; badgeBad?: boolean; compact?: boolean }) {
   return (
-    <section className="panel">
-      <h2>{title}{note && <small>{note}</small>}</h2>
+    <section className={"panel" + (compact ? " compact" : "")}>
+      <h2>{title}{badge !== undefined && <span className={"badge" + (badgeBad ? " bad" : "")}>{badge}</span>}
+        {note && <small>{note}</small>}</h2>
       <div className="panel-body">{children}</div>
     </section>
   );
@@ -238,13 +240,11 @@ const customersPanel: PanelFn = ({ kpi }) => {
 // ranking on dashboard 2 (the ranking is still computed nightly: customersPanel, kept for later)
 const weclappPanel: PanelFn = ({ live }) => {
   const w = live?.weclapp;
-  if (!w) return <Panel title="weclapp orders not in TraceLink"><Missing /></Panel>;
-  const since = fmtDayMonth(w.tracking_from);
+  if (!w) return <Panel title="weclapp not in TraceLink" compact><Missing /></Panel>;
   return (
-    <Panel title="weclapp orders not in TraceLink" note={`created from ${since}`}>
-      <Headlines items={[{ label: `of ${w.orders} weclapp orders${w.no_po ? ` · ${w.no_po} without PO` : ""}`,
-                           value: String(w.missing_count), color: w.missing_count ? C.noReply : C.reply }]} />
-      <List rows={w.missing} max={5} empty="Every weclapp order is in TraceLink"
+    <Panel title="weclapp not in TraceLink" compact badge={`${w.missing_count} of ${w.orders}`} badgeBad={w.missing_count > 0}
+           note={`created from ${fmtDayMonth(w.tracking_from)}`}>
+      <List rows={w.missing} max={4} empty="Every weclapp order is in TraceLink"
             render={(r) => (<><span className="grow"><b>{r.customer}</b>
                                 <span className="sub">PO {r.po || "missing"} · weclapp #{r.weclapp}</span></span>
                               <span className={r.age_days >= 2 ? "bad" : "warn"}>{r.age_days === 0 ? "today" : `${r.age_days} d`}</span></>)} />
@@ -255,11 +255,11 @@ const weclappPanel: PanelFn = ({ live }) => {
 // Hannover: Dachser has a delivery note (picked) but TraceLink still has reservations
 const dachserPickPanel: PanelFn = ({ live }) => {
   const p = live?.dachser_pick;
-  if (!p) return <Panel title="Picked by Dachser – pick in TraceLink"><Missing /></Panel>;
-  if (!p.connected) return <Panel title="Picked by Dachser – pick in TraceLink"><div className="missing">Dachser key not connected yet</div></Panel>;
+  const title = "Picked by Dachser, not in TraceLink";
+  if (!p) return <Panel title={title} compact><Missing /></Panel>;
+  if (!p.connected) return <Panel title={title} compact><div className="missing">Dachser key not connected yet</div></Panel>;
   return (
-    <Panel title="Picked by Dachser – pick in TraceLink" note="delivery note in eLogistics · oldest first">
-      <Headlines items={[{ label: "orders to mirror in TraceLink", value: String(p.count), color: p.count ? C.noReply : C.reply }]} />
+    <Panel title={title} compact badge={String(p.count)} badgeBad={p.count > 0} note="oldest delivery note first">
       <List rows={p.orders} max={6} empty="TraceLink is up to date with Dachser"
             render={(r) => (<><span className="grow"><b>{r.customer}</b>
                                 <span className="sub">PO {r.po} · order {r.order} · {fmtNum(r.reserved_cases)} cs</span></span>
@@ -359,9 +359,9 @@ const productionLine = (name: string, p: any) => {
                       {r.unplanned ? " · not in the plan" : ""}</div>)}
                   {!r.sku && <div className="al nodata">Unknown article</div>}
                   {r.alloc.map((a: any, j: number) => (
-                    <div className={"al" + (a.ready ? " ready" : "")} key={j}><span className="grow">{a.customer}</span>
+                    <div className={"al" + (a.picked ? " picked" : a.ready ? " ready" : "")} key={j}><span className="grow">{a.customer}</span>
                       <span className="q">{fmtNum(a.cases)}{a.cases === a.of ? "" : ` of ${fmtNum(a.of)}`}</span>
-                      <span className="s">{a.ready ? "pending picking" : day(a.start)}</span></div>
+                      <span className="s">{a.picked ? "picked" : a.ready ? "pending picking" : day(a.start)}</span></div>
                   ))}
                   {r.more > 0 && <div className="al more2">+ {r.more} more orders</div>}
                   {r.free > 0 && <div className="al free"><span className="grow">Not yet allocated</span>

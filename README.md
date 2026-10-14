@@ -108,7 +108,9 @@ Setup:
 - **Dashboard 5 actuals**: past days show what was produced, from the TraceLink production orders
   named after the best-before date (production date + 18 months, e.g. "12/04-28 (US)"), output line
   quantity. Until those are registered (next day, no fixed time) a past day shows its plan as
-  "awaiting registration". Reservations covered by produced goods show red "pending picking".
+  "awaiting registration". Reservations covered by produced goods show red "pending picking"; orders already picked from
+  that day's batch stay on the card in green ("picked"; closed orders as "other orders"), and "Not yet
+  allocated" is what is actually left on the batch (unit_back_f) minus the open reservations.
 - **Navigation**: tabs at the top (click a page name), ‹ › arrows, ❚❚ pause; arrow keys, 1-5 and space
   also work. Choosing a page by hand holds the rotation for 10 minutes.
 - **Dashboard 2, weclapp orders not in TraceLink**: weclapp sales orders created from 6 Oct 2026

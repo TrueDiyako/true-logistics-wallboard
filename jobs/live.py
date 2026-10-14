@@ -311,8 +311,10 @@ def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=N
                                 "start": str(o.get("start_date") or "")[:10], "cases": round(q)})
         monday = today - dt.timedelta(days=today.weekday())
         past = [monday + dt.timedelta(days=i) for i in range(7) if monday + dt.timedelta(days=i) < today]
+        lines = [(o["number"], names.get(str(o["customer_id"]), ""), str(o.get("start_date") or "")[:10], g)
+                 for o in open_orders for g in genobj_of(o["order_id"])]
         return production.build((plan_source or production.download_plan)(), res, today,
-                                production.fetch_actuals(tl, past))
+                                production.fetch_actuals(tl, past), production.picks_from_lines(lines))
     if orders:
         payload["production"] = h.section("production plan", plan)
 

@@ -146,6 +146,12 @@ class TraceLink:
         res = _post(f"/tracelink/order/list/module/{module}/{order_id}")
         return res.get("objects") or []
 
+    def objects(self, module, filt, limit=500):
+        """Object list of a module, e.g. batch_genobj. TraceLink uses the same 'order'
+        wrapper here as for orders (verified 14 Oct 2026)."""
+        res = _post(f"/object/list/module/{module}", {"order": {"filter": filt, "limit": limit}})
+        return res.get("objects") or []
+
 
 # ----------------------------- helpers ------------------------------------
 def fnum(x):

@@ -49,20 +49,47 @@ def bbd_name(day):
 
 
 def fetch_actuals(tl, days):
-    """{(day iso, sku): cases produced} for the given production days, from TraceLink."""
+    """{(day iso, sku): {"cases", "left", "picked", "batches"}} for the given production days.
+    cases = unit_order_produced_f of the production order's output line; the batch it created
+    (batch_genobj with src_order_id = production order) gives what was picked from it
+    (unit_used_f) and what is left (unit_back_f)."""
     out = {}
     for day in days:
         prefix = bbd_name(day)
         for o in tl.list_orders({"name": f"{prefix}%"}):
             if o.get("delete_dt") or not str(o.get("name", "")).startswith(prefix + " ("):
                 continue
-            for g in tl.module("genobj", o["order_id"]):
-                if str(g.get("output_product")) != "1":
-                    continue
+            outputs = [g for g in tl.module("genobj", o["order_id"]) if str(g.get("output_product")) == "1"]
+            batches = tl.objects("batch_genobj", {"src_order_id": f"={o['order_id']}"}) if outputs else []
+            for g in outputs:
                 q = float(g.get("unit_order_produced_f") or 0)
-                if q > 0:
-                    key = (day.isoformat(), str(g.get("name") or "").strip())
-                    out[key] = out.get(key, 0) + round(q)
+                if q <= 0:
+                    continue
+                key = (day.isoformat(), str(g.get("name") or "").strip())
+                mine = [bt for bt in batches if str(bt.get("genobj_id")) == str(g.get("object_id"))] or batches
+                rec = out.setdefault(key, {"cases": 0, "left": 0, "picked": 0, "batches": []})
+                rec["cases"] += round(q)
+                rec["left"] += round(sum(float(bt.get("unit_back_f") or 0) for bt in mine))
+                rec["picked"] += round(sum(float(bt.get("unit_used_f") or 0) for bt in mine))
+                rec["batches"] += [str(bt.get("object_id")) for bt in mine]
+    return out
+
+
+def picks_from_lines(order_lines):
+    """[(order, customer, start, line)] -> {batch id: [{"order","customer","start","cases"}]}
+    from the 'batches' record of picked order lines."""
+    import json as _json
+    out = {}
+    for order, customer, start, g in order_lines:
+        try:
+            recs = _json.loads(g.get("batches") or "[]")
+        except ValueError:
+            continue
+        for r in recs:
+            q = float(r.get("unit_count_f") or 0)
+            if q > 0:
+                out.setdefault(str(r.get("batch_genobj_id")), []).append(
+                    {"order": order, "customer": customer, "start": start, "cases": round(q)})
     return out
 
 
@@ -79,15 +106,21 @@ def apply_actuals(runs, actuals, today):
         if key not in actuals:
             r["status"] = "awaiting registration"
             continue
+        rec = actuals[key] if isinstance(actuals[key], dict) else {"cases": actuals[key]}
         same = [x for x in runs if (x["day"], x["sku"]) == key]
         plan_total = sum(x["planned_cases"] if "planned_cases" in x else x["cases"] for x in same) or 1
-        r["cases"] = round(actuals[key] * r["planned_cases"] / plan_total)
+        r["cases"] = round(rec["cases"] * r["planned_cases"] / plan_total)
         r["status"] = "produced"
+        if key not in seen:                     # batch figures go with the first run of that SKU/day
+            r["batches"], r["left"], r["picked"] = rec.get("batches", []), rec.get("left"), rec.get("picked")
         seen.add(key)
     for (day, sku), q in actuals.items():
         if (day, sku) not in seen and day < today.isoformat():
+            rec = q if isinstance(q, dict) else {"cases": q}
             runs.append({"line": LINES[0], "day": day, "flavour": f"Article {sku}", "lang": "", "bags": 0,
-                         "cases": q, "planned_cases": 0, "sku": sku, "status": "produced", "unplanned": True})
+                         "cases": rec["cases"], "planned_cases": 0, "sku": sku, "status": "produced",
+                         "unplanned": True, "batches": rec.get("batches", []), "left": rec.get("left"),
+                         "picked": rec.get("picked")})
     return runs
 
 
@@ -183,14 +216,30 @@ def parse_plan(xlsx_bytes, week_start):
     return runs
 
 
-def allocate(runs, reservations):
-    """reservations: [{sku, customer, order, start, cases}] (open, not shipped, not internal)."""
+def allocate(runs, reservations, picks=None):
+    """reservations: [{sku, customer, order, start, cases}] (open, not shipped, not internal).
+    Produced runs with batch figures: first what was already picked from the batch (green),
+    then open reservations up to what is actually left on the batch."""
+    picks = picks or {}
     left = {}
     for r in sorted(reservations, key=lambda x: (x["start"], x["order"])):
         left.setdefault(r["sku"], []).append(dict(r, left=r["cases"]))
     out = []
     for run in sorted(runs, key=lambda r: (r["day"], LINES.index(r["line"]))):
-        cap, rows = run["cases"], []
+        done = []
+        if run.get("status") == "produced" and run.get("batches") is not None and run.get("left") is not None:
+            for b in run["batches"]:
+                done += picks.get(b, [])
+            found = sum(p["cases"] for p in done)
+            done = [{"customer": p["customer"], "cases": p["cases"], "of": p["cases"], "start": p["start"],
+                     "ready": False, "picked": True} for p in sorted(done, key=lambda p: p["start"])]
+            if (run.get("picked") or 0) > found:      # picked by orders that are already closed
+                done.append({"customer": "other orders", "cases": run["picked"] - found, "of": run["picked"] - found,
+                             "start": "", "ready": False, "picked": True})
+            cap = run["left"]
+        else:
+            cap = run["cases"]
+        rows = []
         for x in left.get(run["sku"], []):
             if cap <= 0:
                 break
@@ -198,18 +247,19 @@ def allocate(runs, reservations):
                 continue
             take = min(cap, x["left"])
             rows.append({"customer": x["customer"], "cases": take, "of": x["cases"], "start": x["start"],
-                         "ready": run.get("status") == "produced"})
+                         "ready": run.get("status") == "produced", "picked": False})
             x["left"] -= take
             cap -= take
-        out.append(dict(run, alloc=rows[:MAX_ROWS_PER_RUN], more=max(0, len(rows) - MAX_ROWS_PER_RUN),
-                        free=cap))
+        shown = done + rows
+        out.append(dict(run, alloc=shown[:MAX_ROWS_PER_RUN + len(done)] if done else rows[:MAX_ROWS_PER_RUN],
+                        more=max(0, len(rows) - MAX_ROWS_PER_RUN), free=cap))
     return out
 
 
-def build(plan_bytes, reservations, today, actuals=None):
+def build(plan_bytes, reservations, today, actuals=None, picks=None):
     monday = today - dt.timedelta(days=today.weekday())
     runs = apply_actuals(parse_plan(plan_bytes, monday), actuals or {}, today)
-    runs = allocate(runs, reservations)
+    runs = allocate(runs, reservations, picks)
     days = [(monday + dt.timedelta(days=i)).isoformat() for i in range(7)]
     used = [d for i, d in enumerate(days) if i < 5 or any(r["day"] == d for r in runs)]
     iso = monday.isocalendar()

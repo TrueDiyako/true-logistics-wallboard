@@ -125,3 +125,16 @@ header .title { flex: 0 1 auto; white-space: nowrap; }
 .chip.clickable:hover { border-color: var(--muted); }
 .chip.clickable.active { background: var(--ink); color: var(--panel); border-color: var(--ink); }
 .chip.clickable.bad.active { background: var(--bad); border-color: var(--bad); color: #fff; }
+
+/* compact panels (Action now, right column): count as a badge, tighter rows */
+.panel h2 .badge { font-size: 1rem; font-weight: 700; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 1vw; padding: .1vh .6vw; color: var(--good); white-space: nowrap; }
+.panel h2 .badge.bad { background: var(--overdue-bg); border-color: #E2B9A1; color: var(--bad); }
+.panel.compact { padding: 1vh .9vw; }
+.panel.compact h2 { font-size: 1.15rem; margin-bottom: .5vh; flex-wrap: wrap; row-gap: .2vh; }
+.panel.compact h2 small { font-size: .8rem; }
+.panel.compact .row { padding: .3vh 0; font-size: 1rem; }
+.panel.compact .row .sub { font-size: .8rem; }
+.panel.compact .empty { font-size: 1rem; }
+.al.picked { color: var(--good); font-weight: 600; }
+.al.picked .s { color: var(--good); width: auto; white-space: nowrap; }

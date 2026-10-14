@@ -99,15 +99,23 @@ class FakeTLProd:
         {"order_id": "1333701", "name": "12/04-28 (US)", "delete_dt": None},
         {"order_id": "1333706", "name": "12/04-28 (CZ/SK/RO/PL/HU/SI/HR/BA/BG)", "delete_dt": None},
         {"order_id": "1333799", "name": "12/04-28 (US) old", "delete_dt": "2026-10-13"}]}
-    LINES = {"1333701": [{"name": "6606", "output_product": "1", "unit_order_produced_f": "439.000000"},
-                         {"name": "5.15.06.01", "output_product": "0", "unit_order_produced_f": "0"}],
-             "1333706": [{"name": "6206", "output_product": "1", "unit_order_produced_f": "3600.000000"}]}
+    LINES = {"1333701": [{"object_id": "3671907", "name": "6606", "output_product": "1", "unit_order_produced_f": "439.000000"},
+                         {"object_id": "1", "name": "5.15.06.01", "output_product": "0", "unit_order_produced_f": "0"}],
+             "1333706": [{"object_id": "3671900", "name": "6206", "output_product": "1", "unit_order_produced_f": "3600.000000"}]}
+    # real batch (14 Oct): "12/04-28 (US)" made by production order 1333701: 439 made, 20 picked, 419 left
+    BATCHES = {"1333701": [{"object_id": "4109384", "name": "12/04-28 (US)", "genobj_id": "3671907", "src_order_id": "1333701",
+                            "unit_count_f": "439.000000", "unit_used_f": "20.000000", "unit_back_f": "419.000000"}],
+               "1333706": [{"object_id": "4109390", "name": "12/04-28 (CZ/SK)", "genobj_id": "3671900", "src_order_id": "1333706",
+                            "unit_count_f": "3600.000000", "unit_used_f": "1176.000000", "unit_back_f": "2424.000000"}]}
     def list_orders(self, f): return self.ORDERS.get(f["name"], [])
     def module(self, m, oid): return self.LINES.get(oid, [])
+    def objects(self, module, f):
+        assert module == "batch_genobj"; return self.BATCHES.get(f["src_order_id"].lstrip("="), [])
 
 def test_actuals_from_production_orders():
     a = p.fetch_actuals(FakeTLProd(), [dt.date(2026, 10, 12)])
-    assert a == {("2026-10-12", "6606"): 439, ("2026-10-12", "6206"): 3600}
+    assert a == {("2026-10-12", "6606"): {"cases": 439, "left": 419, "picked": 20, "batches": ["4109384"]},
+                 ("2026-10-12", "6206"): {"cases": 3600, "left": 2424, "picked": 1176, "batches": ["4109390"]}}
 
 def plan_42():
     wb = openpyxl.Workbook(); wb.remove(wb.active)
@@ -128,12 +136,28 @@ def test_past_days_show_actual_and_ready_pending_picking():
     L, B = out["lines"]["Laudenberg"], out["lines"]["Bossar"]
     us = L[0]
     assert us["status"] == "produced" and us["planned_cases"] == 500 and us["cases"] == 439
-    assert us["alloc"][0]["ready"] and us["free"] == 419
+    # 20 picked by orders not in the open list -> green "other orders"; BEBIDAS' open 20 reserved -> red
+    assert [(a["customer"], a["cases"], a["picked"], a["ready"]) for a in us["alloc"]] == \
+        [("other orders", 20, True, False), ("BEBIDAS", 20, False, True)]
+    assert us["free"] == 399                       # 419 left on the batch - 20 still reserved
     cz = L[1]
-    assert cz["status"] == "produced" and cz["cases"] == 3600 and cz["alloc"][0]["ready"]
+    assert cz["status"] == "produced" and cz["cases"] == 3600 and cz["left"] == 2424
     assert B[0]["status"] == "awaiting registration" and B[0]["cases"] == 1000 and not any(a["ready"] for a in B[0]["alloc"])
     bc = L[2]                                                   # Wednesday: still the plan
     assert bc["status"] == "planned" and bc["cases"] == 6666 and not bc["alloc"][0]["ready"]
+
+def test_picked_orders_turn_green_and_left_comes_from_the_batch():
+    # real: order line of 1323648 picked 20 x 6606 from batch 4109384 on 14 Oct
+    line = {"name": "6606", "batches": '[{"batch_genobj_id":"4109384","unit_count_f":"20.000000","create_date":"2026-10-14 10:22:48"}]'}
+    picks = p.picks_from_lines([("1022700", "BEBIDAS CINCO CERO SL", "2026-11-03", line),
+                                ("1022701", "X", "2026-11-03", {"batches": "[]"}), ("1022702", "Y", "", {"batches": "not json"})])
+    assert picks == {"4109384": [{"order": "1022700", "customer": "BEBIDAS CINCO CERO SL", "start": "2026-11-03", "cases": 20}]}
+    actuals = p.fetch_actuals(FakeTLProd(), [dt.date(2026, 10, 12)])
+    res = [{"sku": "6606", "order": "2", "customer": "Humble Group USA", "start": "2026-10-20", "cases": 100}]
+    us = p.build(plan_42(), res, dt.date(2026, 10, 13), actuals, picks)["lines"]["Laudenberg"][0]
+    assert [(a["customer"], a["cases"], a["picked"]) for a in us["alloc"]] == \
+        [("BEBIDAS CINCO CERO SL", 20, True), ("Humble Group USA", 100, False)]
+    assert us["alloc"][1]["ready"] and us["free"] == 319     # 419 left - 100 pending picking
 
 def test_unplanned_production_is_shown():
     out = p.build(plan_42(), [], dt.date(2026, 10, 13), {("2026-10-12", "6309"): 250})
