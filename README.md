@@ -118,6 +118,11 @@ Setup:
   Shop"); one TraceLink entry matches one weclapp order. Refreshed hourly. Needs the GitHub secret
   `WECLAPP_TOKEN`. (The OTIF best/worst customer ranking is still computed nightly into `lk:kpi`
   -> `customers`, just not shown.)
+- **Dashboard 2, Picked by Dachser – pick in TraceLink**: open True Company GmbH orders in TraceLink
+  ("<Customer> | <PO>") that still have reservations while Dachser Hannover already has a delivery
+  note for the PO (eLogistics, warehouse API). A PO on one Dachser order always matches (TraceLink
+  orders are sometimes created days after shipping); a PO shared by several Dachser orders is matched
+  on the closest delivery date (max 3 days). Secrets `DACHSER_NOTES_KEY`, `DACHSER_STATUS_KEY`.
 - **Dashboard 4**: open orders, start date today or later, top 20 by current e-conomic value, plus their
   share of all open order value. Delivery = current TraceLink delivery date. Transport = Dachser Track &
   Trace (shipmenthistory): looked up by TraceLink order number (Glostrup bookings) and customer order

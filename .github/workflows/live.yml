@@ -23,6 +23,8 @@ jobs:
       BOOKING_WARNING: ${{ vars.BOOKING_WARNING }}             # "1" = red "book now" on dashboard 4
       WECLAPP_TOKEN: ${{ secrets.WECLAPP_TOKEN }}              # weclapp API token (read only is enough)
       GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}   # reads the Claude skill logs
+      DACHSER_NOTES_KEY: ${{ secrets.DACHSER_NOTES_KEY }}      # Hannover warehouse: delivery notes
+      DACHSER_STATUS_KEY: ${{ secrets.DACHSER_STATUS_KEY }}    # Hannover warehouse: delivery-order status
       KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
       KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
     steps:
@@ -35,6 +37,7 @@ jobs:
           KV_REST_API_URL= python test_production.py
           KV_REST_API_URL= python test_weclapp.py
           KV_REST_API_URL= python test_skill_usage.py
+          KV_REST_API_URL= python test_dachser_notes.py
           KV_REST_API_URL= python test_jobs.py
       - name: Build order lists and publish
         run: python live.py

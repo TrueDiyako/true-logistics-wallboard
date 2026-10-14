@@ -244,10 +244,27 @@ const weclappPanel: PanelFn = ({ live }) => {
     <Panel title="weclapp orders not in TraceLink" note={`created from ${since}`}>
       <Headlines items={[{ label: `of ${w.orders} weclapp orders${w.no_po ? ` · ${w.no_po} without PO` : ""}`,
                            value: String(w.missing_count), color: w.missing_count ? C.noReply : C.reply }]} />
-      <List rows={w.missing} max={11} empty="Every weclapp order is in TraceLink"
+      <List rows={w.missing} max={5} empty="Every weclapp order is in TraceLink"
             render={(r) => (<><span className="grow"><b>{r.customer}</b>
                                 <span className="sub">PO {r.po || "missing"} · weclapp #{r.weclapp}</span></span>
                               <span className={r.age_days >= 2 ? "bad" : "warn"}>{r.age_days === 0 ? "today" : `${r.age_days} d`}</span></>)} />
+    </Panel>
+  );
+};
+
+// Hannover: Dachser has a delivery note (picked) but TraceLink still has reservations
+const dachserPickPanel: PanelFn = ({ live }) => {
+  const p = live?.dachser_pick;
+  if (!p) return <Panel title="Picked by Dachser – pick in TraceLink"><Missing /></Panel>;
+  if (!p.connected) return <Panel title="Picked by Dachser – pick in TraceLink"><div className="missing">Dachser key not connected yet</div></Panel>;
+  return (
+    <Panel title="Picked by Dachser – pick in TraceLink" note="delivery note in eLogistics · oldest first">
+      <Headlines items={[{ label: "orders to mirror in TraceLink", value: String(p.count), color: p.count ? C.noReply : C.reply }]} />
+      <List rows={p.orders} max={6} empty="TraceLink is up to date with Dachser"
+            render={(r) => (<><span className="grow"><b>{r.customer}</b>
+                                <span className="sub">PO {r.po} · order {r.order} · {fmtNum(r.reserved_cases)} cs</span></span>
+                              <span className={(r.note_days ?? 0) >= 1 ? "bad" : "warn"}>
+                                {r.note_days == null ? "" : r.note_days === 0 ? "today" : `${r.note_days} d`}</span></>)} />
     </Panel>
   );
 };
@@ -382,8 +399,9 @@ export const DASHBOARDS: Dashboard[] = [
     layout: `"otif shorts" "reply credit"`, columns: "1fr 1fr", rows: "1fr 1fr",
     panels: { otif: otifPanel, shorts: aiPanel, reply: responsePanel, credit: creditPanel } },
   { id: "action", tab: "Action now", title: "What needs doing now", seconds: 300,
-    layout: `"emails due customers" "emails credits customers"`, columns: "1.1fr 1.35fr 0.95fr", rows: "1fr 1fr",
-    panels: { emails: emailsPanel, due: duePanel, credits: creditsCheckPanel, customers: weclappPanel } },
+    layout: `"emails due weclapp" "emails credits dachser"`, columns: "1.1fr 1.35fr 0.95fr", rows: "1fr 1fr",
+    panels: { emails: emailsPanel, due: duePanel, credits: creditsCheckPanel, weclapp: weclappPanel,
+              dachser: dachserPickPanel } },
   { id: "status", tab: "Order status", title: "Open orders by status", seconds: 300,
     layout: `"board"`, columns: "1fr", rows: "1fr", panels: { board: statusBoard } },
   { id: "biggest", tab: "Biggest orders", title: "Biggest open orders", seconds: 300,

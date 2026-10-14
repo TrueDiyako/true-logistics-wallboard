@@ -8,6 +8,7 @@ Writes Redis key lk:live:
   emails_waiting dashboard 2: customer mails waiting > 1 business day
   production     dashboard 5: this week's production plan and what it covers
   weclapp        dashboard 2: weclapp orders (from 6 Oct) with no TraceLink order
+  dachser_pick   dashboard 2: picked by Dachser (delivery note) but not picked in TraceLink
 """
 import datetime as dt
 import json
@@ -21,6 +22,7 @@ import urllib.request
 import common
 import credit_notes_extract as cx
 import otif_extract as ox
+import dachser_notes
 import production
 import skill_usage
 import weclapp_check
@@ -292,6 +294,7 @@ def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=N
     payload["emails_waiting"] = h.section("emails", emails)
     payload["ai_adoption"] = h.section("AI adoption (skill logs)", skill_usage.build,
                                        drive or skill_usage.Drive(), today)
+    payload["dachser_pick"] = h.section("Dachser delivery notes", dachser_notes.build, tl, today)
     payload["weclapp"] = h.section("weclapp vs TraceLink", weclapp_check.build,
                                    weclapp or weclapp_check.Weclapp(), tl, today)
 
@@ -316,7 +319,7 @@ def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=N
     payload = {k: v for k, v in payload.items() if v is not None}
     common.keep_previous(payload, "lk:live",
                          ["status_board", "biggest", "biggest_summary", "due_not_ready", "emails_waiting", "production",
-                          "weclapp", "ai_adoption"])
+                          "weclapp", "ai_adoption", "dachser_pick"])
     payload["dachser_tracking"] = dachser.status
     payload["booking_warning"] = BOOKING_WARNING
     common.redis_set("lk:live", payload)
