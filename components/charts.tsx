@@ -14,6 +14,17 @@ export function LineChart({ labels, series, height = H0, count = false }:
   const step = count ? Math.max(1, Math.ceil(dataMax / 4 / (dataMax > 20 ? 5 : 1)) * (dataMax > 20 ? 5 : 1)) : 25;
   const top = count ? step * 4 : 100;
   const unit = count ? "" : "%";
+  // end-of-line labels: keep at least GAP apart so values like 48% / 44% never overlap
+  const GAP = 30;
+  const ends = series.map((s, i) => {
+    const li = s.values.map((v, k) => (v == null ? -1 : k)).filter((k) => k >= 0).pop();
+    return { i, li, y: li === undefined ? 0 : T + (1 - (s.values[li] as number) / top) * (H - T - B) + 9 };
+  }).filter((e) => e.li !== undefined).sort((a, b) => a.y - b.y);
+  for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k - 1].y < GAP) ends[k].y = ends[k - 1].y + GAP;
+  const over = ends.length ? ends[ends.length - 1].y - (H - B + 4) : 0;   // pushed below the axis: shift all up
+  if (over > 0) ends.forEach((e) => (e.y -= over));
+  const labelY: Record<number, number> = {};
+  ends.forEach((e) => (labelY[e.i] = e.y));
   const n = Math.max(labels.length, 1);
   const x = (i: number) => L + (n === 1 ? (W - L - R) / 2 : (i * (W - L - R)) / (n - 1));
   const y = (v: number) => T + (1 - v / top) * (H - T - B);
@@ -28,7 +39,7 @@ export function LineChart({ labels, series, height = H0, count = false }:
       {labels.map((l, i) => (
         <text key={l} x={x(i)} y={H - 14} className="axis" textAnchor="middle">{weekLabel(l)}</text>
       ))}
-      {series.map((s) => {
+      {series.map((s, si) => {
         const pts = s.values.map((v, i) => (v == null ? null : [x(i), y(v)] as [number, number]));
         const segs: string[] = [];
         let cur = "";
@@ -46,7 +57,7 @@ export function LineChart({ labels, series, height = H0, count = false }:
             ))}
             {pts.map((p, i) => p && <circle key={i} cx={p[0]} cy={p[1]} r={(s.width || 5) + 1} fill={s.color} />)}
             {lastIdx !== undefined && (
-              <text x={x(lastIdx) + 12} y={y(s.values[lastIdx] as number) + 9}
+              <text x={x(lastIdx) + 12} y={labelY[si] ?? y(s.values[lastIdx] as number) + 9}
                     className="pointlabel" fill={s.color}>{Math.round(s.values[lastIdx] as number)}{unit}</text>
             )}
           </g>

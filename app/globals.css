@@ -121,3 +121,7 @@ header .title { flex: 0 1 auto; white-space: nowrap; }
 .tabs { justify-content: flex-start; }
 .tabs button { white-space: nowrap; font-size: 1.15rem; padding: .6vh 1.1vw; }
 .tabs .tab.on { font-weight: 600; }
+.chip.clickable { cursor: pointer; font: inherit; font-size: .95rem; color: var(--ink); }
+.chip.clickable:hover { border-color: var(--muted); }
+.chip.clickable.active { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.chip.clickable.bad.active { background: var(--bad); border-color: var(--bad); color: #fff; }

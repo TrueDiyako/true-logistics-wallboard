@@ -63,6 +63,13 @@ export default function Wallboard() {
   const go = (i: number) => { setIdx((i + DASHBOARDS.length) % DASHBOARDS.length); setPausedUntil((p) => (p === Infinity ? p : Date.now() + PAUSE_MS)); };
   const togglePause = () => setPausedUntil((p) => (p === Infinity || p > Date.now() ? 0 : Infinity));
 
+  // a click inside a panel (e.g. a filter) holds the rotation like a page choice
+  useEffect(() => {
+    const hold = () => setPausedUntil((p) => (p === Infinity ? p : Date.now() + PAUSE_MS));
+    window.addEventListener("wallboard:interact", hold);
+    return () => window.removeEventListener("wallboard:interact", hold);
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowRight" || e.key === "PageDown") go(idx + 1);

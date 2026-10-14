@@ -12,7 +12,7 @@ FILES = [
     F("Skill usage log - process-weclapp-order - 2026-10-13 1346 - 4682.txt", "frederikke.truegum@gmail.com"),
     F("Skill usage log - tracelink-order-closeout - 2026-10-12 0915 - 1022786.txt", "valentina.truecompany@gmail.com"),
     F("Skill usage log - internal-purchase - 2026-10-20 1001 - 2069180098.txt", "andreas@truecompany.com"),   # next week
-    F("Skill usage log - internal-purchase - 2026-10-09 1001 - 2069100001.txt", "andreas@truecompany.com"),   # before start
+    F("Skill usage log - internal-purchase - 2026-10-02 1001 - 2069100001.txt", "andreas@truecompany.com"),   # before start
     F("Skill usage log - some-other-skill - 2026-10-13 1001 - x.txt", "andreas@truecompany.com"),           # not tracked
     F("notes.txt", "andreas@truecompany.com"),
 ]
@@ -24,8 +24,9 @@ class FakeDrive:
 
 def test_weekly_counts_from_week_42():
     out = su.build(FakeDrive(FILES), dt.date(2026, 10, 21))
-    assert out["connected"] and out["tracking_from"] == "2026-10-12"
-    assert out["weekly"] == [{"week": "2026-W42", "tracelink-order-closeout": 1, "internal-purchase": 0, "process-weclapp-order": 4},
+    assert out["connected"] and out["tracking_from"] == "2026-10-05"
+    assert out["weekly"] == [{"week": "2026-W41", "tracelink-order-closeout": 0, "internal-purchase": 0, "process-weclapp-order": 0},
+                             {"week": "2026-W42", "tracelink-order-closeout": 1, "internal-purchase": 0, "process-weclapp-order": 4},
                              {"week": "2026-W43", "tracelink-order-closeout": 0, "internal-purchase": 1, "process-weclapp-order": 0}]
     assert out["this_week"] == {"tracelink-order-closeout": 0, "internal-purchase": 1, "process-weclapp-order": 0}
     assert out["people_this_week"] == [("Andreas", 1)] and out["total"] == 6

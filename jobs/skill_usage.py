@@ -18,7 +18,7 @@ import common
 
 FOLDER_ID = "1IySoDRSkBnAqzRP8R2fiLfJUuwzj4JxH"          # Internal operations / Claude logs
 SKILLS = ["tracelink-order-closeout", "internal-purchase", "process-weclapp-order"]
-TRACK_FROM = dt.date(2026, 10, 12)                          # week 42 2026
+TRACK_FROM = dt.date(2026, 10, 5)                           # week 41 2026 (logging started in week 42)
 _NAME = re.compile(r"Skill usage log - (?P<skill>[\w-]+) - (?P<day>\d{4}-\d{2}-\d{2}) (?P<hm>\d{4})"
                    r"(?: - (?P<ref>.*?))?\.txt$", re.I)
 # Drive owner -> first name shown on the TV (anything else: the part before "@"/"." capitalised)

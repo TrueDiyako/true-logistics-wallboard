@@ -65,6 +65,30 @@ def test_not_excel_is_a_clear_error():
     finally:
         p.urllib.request.urlopen = orig
 
+def test_header_titles_overwritten_still_parsed():
+    # real (14 Oct 2026): Laudenberg header "Date" became "9", Bossar "Foil 1" became "O"
+    wb = openpyxl.Workbook(); wb.remove(wb.active)
+    L = wb.create_sheet("Production Plan Laudenberg")
+    L.append(["9", "Flavor 1", "Foil 1", "Units 1", "Flavor 2", "Foil 2", "Units 2", "Comments"])
+    L.append([dt.datetime(2026, 10, 12), "Sour Watermelon", "US", 6000, "Sour Watermelon", "CZ/SK/RO/PL/HU/SI/HR/BG", 45000])
+    B = wb.create_sheet("Production Plan Bossar")
+    B.append(["Date", "Flavor 1", "O", "Units 1", "Flavor 2", "Foil 2", "Units 2"])
+    B.append([dt.datetime(2026, 10, 12), "Sour Apple", "CZ/SK/RO/PL", 12000])
+    f = io.BytesIO(); wb.save(f)
+    runs = p.parse_plan(f.getvalue(), dt.date(2026, 10, 12))
+    assert [(r["line"], r["sku"], r["cases"]) for r in runs] == [("Laudenberg", "6606", 500), ("Laudenberg", "6206", 3750),
+                                                                 ("Bossar", "6207", 1000)]
+
+def test_missing_header_is_a_clear_error_not_an_empty_week():
+    wb = openpyxl.Workbook(); wb.remove(wb.active)
+    L = wb.create_sheet("Production Plan Laudenberg"); L.append(["Date", "Taste 1", "Foil 1", "Units 1"])
+    B = wb.create_sheet("Production Plan Bossar"); B.append(["Date", "Flavor 1", "Foil 1", "Units 1", "Flavor 2"])
+    f = io.BytesIO(); wb.save(f)
+    try:
+        p.parse_plan(f.getvalue(), dt.date(2026, 10, 12)); assert False
+    except RuntimeError as e:
+        assert "Laudenberg" in str(e) and "header" in str(e)
+
 def test_bbd_names():
     assert p.bbd_name(dt.date(2026, 10, 12)) == "12/04-28"          # real: Monday's production orders
     assert p.bbd_name(dt.date(2026, 8, 31)) == "29/02-28"           # no 31 Feb -> last day of month

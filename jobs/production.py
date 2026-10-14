@@ -147,15 +147,21 @@ def parse_plan(xlsx_bytes, week_start):
         if ws is None:
             raise RuntimeError(f"No '{line}' tab in the production plan")
         triplets, date_col = None, None
+        dated_rows = 0
         for row in ws.iter_rows(values_only=True):
             cells = list(row)
             if triplets is None:
+                # header row = the row with the "Flavor 1, Flavor 2, ..." titles. Its other titles
+                # get overwritten now and then (seen: "Date" -> "9", "Foil 1" -> "O"), so only the
+                # Flavor titles are relied on; the dates sit in the column left of "Flavor 1".
                 low = [str(c or "").strip().lower() for c in cells]
-                if "date" in low and any(c.startswith("flavo") for c in low):
-                    date_col = low.index("date")
-                    triplets = [i for i, c in enumerate(low) if c.startswith("flavo")]
+                flav = [i for i, c in enumerate(low) if c.startswith("flavo")]
+                if len(flav) >= 2:
+                    triplets = flav
+                    date_col = low.index("date") if "date" in low else max(0, flav[0] - 1)
                 continue
             day = as_date(cells[date_col]) if date_col < len(cells) else None
+            dated_rows += day is not None
             if day not in week:
                 continue
             for i in triplets:
@@ -170,6 +176,10 @@ def parse_plan(xlsx_bytes, week_start):
                 runs.append({"line": line, "day": day.isoformat(), "flavour": str(fl).strip(),
                              "lang": lang, "bags": n, "cases": n // BAGS_PER_CASE,
                              "sku": sku if len(sku) == 4 else ""})
+        if triplets is None:
+            raise RuntimeError(f"'{ws.title}': no header row with 'Flavor 1, Flavor 2, ...' found")
+        if not dated_rows:
+            raise RuntimeError(f"'{ws.title}': no dates found in the column left of 'Flavor 1'")
     return runs
 
 

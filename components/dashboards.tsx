@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { LineChart, HBar, Legend } from "./charts";
 import { fmtDay, fmtDayNum, fmtDayMonth, fmtDayMonthLong, fmtNum, fmtOneDecimal } from "@/lib/fmt";
 
@@ -102,7 +102,6 @@ const aiPanel: PanelFn = ({ live }) => {
   if (!a) return <Panel title="AI adoption"><Missing /></Panel>;
   if (!a.connected) return <Panel title="AI adoption" note="Claude skills"><div className="missing">Skill log not connected yet</div></Panel>;
   const w = a.weekly || [];
-  const people = (a.people_this_week || []).map((p: any) => `${p[0]} ${p[1]}`).join(" · ");
   return (
     <Panel title="AI adoption" note="uses of the Claude skills · this week and per week">
       <Headlines items={a.skills.map((s: string) => ({ label: SKILL_LABEL[s] || s,
@@ -110,7 +109,6 @@ const aiPanel: PanelFn = ({ live }) => {
       <LineChart count labels={w.map((x: any) => x.week)}
                  series={a.skills.map((s: string, i: number) => ({ name: s, values: w.map((x: any) => x[s]),
                                                                     color: SKILL_COLORS[s], width: i === 0 ? 7 : 5 }))} />
-      {people && <div className="notes"><span>This week: {people}</span></div>}
     </Panel>
   );
 };
@@ -172,25 +170,39 @@ const emailsPanel: PanelFn = ({ live }) => {
   );
 };
 
-const duePanel: PanelFn = ({ live }) => {
-  const rows = live?.due_not_ready;
-  if (!rows) return <Panel title="Due in 3 days, not ready"><Missing /></Panel>;
+// clicking a counter filters the list (click again = all); it also holds the rotation
+// for 10 minutes so the page doesn't change while someone reads it
+type DueFilter = "all" | "overdue" | "today" | "next";
+function DueList({ rows }: { rows: any[] }) {
+  const [filter, setFilter] = useState<DueFilter>("all");
   const today = new Date().toISOString().slice(0, 10);
-  const over = rows.filter((r: any) => r.overdue).length;
-  const todayN = rows.filter((r: any) => !r.overdue && r.start === today).length;
-  const sorted = [...rows].sort((a: any, b: any) => (b.days_late || 0) - (a.days_late || 0) || (a.start < b.start ? -1 : 1));
+  const kind = (r: any): DueFilter => (r.overdue ? "overdue" : r.start === today ? "today" : "next");
+  const n = (k: DueFilter) => rows.filter((r) => kind(r) === k).length;
+  const pick = (k: DueFilter) => {
+    setFilter((f) => (f === k ? "all" : k));
+    window.dispatchEvent(new Event("wallboard:interact"));
+  };
+  const shown = rows.filter((r) => filter === "all" || kind(r) === filter)
+    .sort((a, b) => (b.days_late || 0) - (a.days_late || 0) || (a.start < b.start ? -1 : 1));
+  const chip = (k: DueFilter, label: string, cls = "") => (
+    <button className={"chip clickable " + cls + (filter === k ? " active" : "")} onClick={() => pick(k)}>
+      {label} <b>{n(k)}</b></button>);
   return (
-    <Panel title="Due in 3 days, not ready" note="oldest first">
-      <div className="chips"><span className="chip bad">Overdue <b>{over}</b></span>
-        <span className="chip">Due today <b>{todayN}</b></span>
-        <span className="chip">Next 3 days <b>{rows.length - over - todayN}</b></span></div>
-      <List rows={sorted} max={9} empty="Everything due is ready"
+    <>
+      <div className="chips">{chip("overdue", "Overdue", "bad")}{chip("today", "Due today")}{chip("next", "Next 3 days")}</div>
+      <List rows={shown} max={9} empty={filter === "all" ? "Everything due is ready" : "None"}
             render={(r) => (<><span className="grow">{r.customer} · {r.order}{r.po ? ` · ${r.po}` : ""}</span>
                               <span className="muted2">{r.status === "Partially ready for warehouse" ? "Partially ready" : "Not ready"}</span>
                               {r.overdue ? <span className="bad">{r.days_late} d late</span>
                                          : <span className="warn">{r.start === today ? "today" : day(r.start)}</span>}</>)} />
-    </Panel>
+    </>
   );
+}
+
+const duePanel: PanelFn = ({ live }) => {
+  const rows = live?.due_not_ready;
+  if (!rows) return <Panel title="Due in 3 days, not ready"><Missing /></Panel>;
+  return <Panel title="Due in 3 days, not ready" note="oldest first · click a counter to filter"><DueList rows={rows} /></Panel>;
 };
 
 const creditsCheckPanel: PanelFn = ({ kpi }) => (
