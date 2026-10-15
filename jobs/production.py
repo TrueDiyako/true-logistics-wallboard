@@ -38,6 +38,7 @@ FLAVOUR_CODE = {"sour cola": "01", "sweet peach": "02", "cookie dough": "03", "p
 
 
 BBD_MONTHS = 18
+REGISTER_DAYS = 7          # dates production orders are registered the day after, at the latest a week
 
 
 def bbd_name(day):
@@ -65,6 +66,11 @@ def fetch_actuals(tl, days):
         prefix = bbd_name(day)
         for o in tl.list_orders({"name": f"{prefix}%"}):
             if o.get("delete_dt") or not str(o.get("name", "")).startswith(prefix + " ("):
+                continue
+            # the BBD is not unique: gum/mints (longer shelf life) produced months earlier carry the
+            # same "14/04-28" - only orders registered within REGISTER_DAYS after the day count
+            created = str(o.get("create_date") or "")[:10]
+            if not created or not (day.isoformat() <= created <= (day + dt.timedelta(days=REGISTER_DAYS)).isoformat()):
                 continue
             outputs = [g for g in tl.module("genobj", o["order_id"])
                        if str(g.get("output_product")) == "1" and is_dates_sku(g.get("name"))]

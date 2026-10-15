@@ -96,9 +96,9 @@ def test_bbd_names():
 class FakeTLProd:
     # real (13 Oct 2026): production orders for Monday 12 Oct, registered on Tuesday
     ORDERS = {"12/04-28%": [
-        {"order_id": "1333701", "name": "12/04-28 (US)", "delete_dt": None},
-        {"order_id": "1333706", "name": "12/04-28 (CZ/SK/RO/PL/HU/SI/HR/BA/BG)", "delete_dt": None},
-        {"order_id": "1333799", "name": "12/04-28 (US) old", "delete_dt": "2026-10-13"}]}
+        {"order_id": "1333701", "name": "12/04-28 (US)", "delete_dt": None, "create_date": "2026-10-13 10:46:58.000"},
+        {"order_id": "1333706", "name": "12/04-28 (CZ/SK/RO/PL/HU/SI/HR/BA/BG)", "delete_dt": None, "create_date": "2026-10-13 11:02:00.000"},
+        {"order_id": "1333799", "name": "12/04-28 (US) old", "delete_dt": "2026-10-13", "create_date": "2026-10-13"}]}
     LINES = {"1333701": [{"object_id": "3671907", "name": "6606", "output_product": "1", "unit_order_produced_f": "439.000000"},
                          {"object_id": "1", "name": "5.15.06.01", "output_product": "0", "unit_order_produced_f": "0"}],
              "1333706": [{"object_id": "3671900", "name": "6206", "output_product": "1", "unit_order_produced_f": "3600.000000"}]}
@@ -162,8 +162,8 @@ def test_picked_orders_turn_green_and_left_comes_from_the_batch():
 def test_gum_and_mints_production_is_ignored():
     # real (15 Oct): gum/mints production orders with the same BBD naming, articles 4.13, 103, 106.16
     class TLGum(FakeTLProd):
-        ORDERS = {"14/04-28%": [{"order_id": "77", "name": "14/04-28 (DK)", "delete_dt": None},
-                                {"order_id": "78", "name": "14/04-28 (EN/DK)", "delete_dt": None}]}
+        ORDERS = {"14/04-28%": [{"order_id": "77", "name": "14/04-28 (DK)", "delete_dt": None, "create_date": "2026-10-15 08:00:00"},
+                                {"order_id": "78", "name": "14/04-28 (EN/DK)", "delete_dt": None, "create_date": "2026-10-15 09:09:08"}]}
         LINES = {"77": [{"object_id": "1", "name": "103", "output_product": "1", "unit_order_produced_f": "916"},
                         {"object_id": "2", "name": "4.13", "output_product": "1", "unit_order_produced_f": "208"},
                         {"object_id": "3", "name": "106.16", "output_product": "1", "unit_order_produced_f": "469"}],
@@ -173,6 +173,22 @@ def test_gum_and_mints_production_is_ignored():
     assert list(a) == [("2026-10-14", "6310")]
     assert [p.is_dates_sku(x) for x in ("6606", "6206", "103", "4.13", "106.16", "6106", "60061")] == \
         [True, True, False, False, False, False, False]
+
+def test_old_gum_and_mints_orders_with_the_same_bbd_are_ignored():
+    # real (15 Oct): 29 production orders named "14/04-28 ...", most of them gum/mints from Jan-Oct
+    class TLReal(FakeTLProd):
+        ORDERS = {"14/04-28%": [
+            {"order_id": "1173913", "name": "14/04-28 (AUS) True Gum Liquorice 24-case - AUS", "delete_dt": None, "create_date": "2026-02-03 10:38:18.000"},
+            {"order_id": "1261361", "name": "14/04-28 (DE) True Mints Peach 18-case - DENLFRESIT", "delete_dt": None, "create_date": "2026-06-16 11:54:39.000"},
+            {"order_id": "1326908", "name": "14/04-28 (UK) True Gum Liquorice 24-case - UK", "delete_dt": None, "create_date": "2026-10-01 15:04:47.000"},
+            {"order_id": "1335250", "name": "14/04-28 (CZ/SK/RO/PL/HU/SI/HR/BA/BG)", "delete_dt": None, "create_date": "2026-10-15 09:01:42.000"}]}
+        LINES = {"1173913": [{"object_id": "1", "name": "6604", "output_product": "1", "unit_order_produced_f": "208"}],   # even with a dates-like number
+                 "1261361": [{"object_id": "2", "name": "106.16", "output_product": "1", "unit_order_produced_f": "469"}],
+                 "1326908": [{"object_id": "3", "name": "4.13", "output_product": "1", "unit_order_produced_f": "153"}],
+                 "1335250": [{"object_id": "4", "name": "6211", "output_product": "1", "unit_order_produced_f": "6666"}]}
+        BATCHES = {}
+    a = p.fetch_actuals(TLReal(), [dt.date(2026, 10, 14)])
+    assert list(a) == [("2026-10-14", "6211")] and a[("2026-10-14", "6211")]["cases"] == 6666
 
 def test_unplanned_production_is_shown():
     out = p.build(plan_42(), [], dt.date(2026, 10, 13), {("2026-10-12", "6309"): 250})
