@@ -26,15 +26,21 @@ def test_weekly_counts_from_week_42():
     out = su.build(FakeDrive(FILES), dt.date(2026, 10, 21))
     assert out["connected"] and out["tracking_from"] == "2026-10-05"
     assert out["weekly"] == [{"week": "2026-W41", "tracelink-order-closeout": 0, "internal-purchase": 0, "process-weclapp-order": 0},
-                             {"week": "2026-W42", "tracelink-order-closeout": 1, "internal-purchase": 0, "process-weclapp-order": 4},
+                             {"week": "2026-W42", "tracelink-order-closeout": 1, "internal-purchase": 24, "process-weclapp-order": 4},
                              {"week": "2026-W43", "tracelink-order-closeout": 0, "internal-purchase": 1, "process-weclapp-order": 0}]
     assert out["this_week"] == {"tracelink-order-closeout": 0, "internal-purchase": 1, "process-weclapp-order": 0}
-    assert out["people_this_week"] == [("Andreas", 1)] and out["total"] == 6
+    assert out["people_this_week"] == [("Andreas", 1)] and out["total"] == 6 + 24
 
 def test_today_and_people():
     out = su.build(FakeDrive(FILES), dt.date(2026, 10, 13))
-    assert out["this_week"]["process-weclapp-order"] == 4 and out["total"] == 5     # the 20 Oct file is in the future
+    assert out["this_week"]["process-weclapp-order"] == 4 and out["total"] == 5 + 24   # the 20 Oct file is in the future
     assert out["people_this_week"] == [("Frederikke", 4), ("Valentina", 1)]
+
+def test_manual_uses_are_added_to_their_week():
+    out = su.build(FakeDrive(FILES), dt.date(2026, 10, 14))
+    assert out["this_week"]["internal-purchase"] == 24 and out["weekly"][1]["internal-purchase"] == 24
+    out = su.build(FakeDrive(FILES), dt.date(2026, 10, 21))           # next week: only the log file
+    assert out["this_week"]["internal-purchase"] == 1 and out["weekly"][1]["internal-purchase"] == 24
 
 def test_not_connected_without_secret():
     out = su.build(su.Drive(sa_json=""), dt.date(2026, 10, 13))

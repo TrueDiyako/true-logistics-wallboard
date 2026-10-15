@@ -18,6 +18,8 @@ import common
 
 FOLDER_ID = "1IySoDRSkBnAqzRP8R2fiLfJUuwzj4JxH"          # Internal operations / Claude logs
 SKILLS = ["tracelink-order-closeout", "internal-purchase", "process-weclapp-order"]
+# uses that happened without a log file, added by hand: {(ISO week, skill): count}
+MANUAL_USES = {("2026-W42", "internal-purchase"): 24}     # logged by hand on 14 Oct 2026
 TRACK_FROM = dt.date(2026, 10, 5)                           # week 41 2026 (logging started in week 42)
 _NAME = re.compile(r"Skill usage log - (?P<skill>[\w-]+) - (?P<day>\d{4}-\d{2}-\d{2}) (?P<hm>\d{4})"
                    r"(?: - (?P<ref>.*?))?\.txt$", re.I)
@@ -100,12 +102,14 @@ def build(drive, today, track_from=TRACK_FROM):
         weeks.append(iso_week(wk))
         wk += dt.timedelta(days=7)
     this_week = iso_week(today)
-    weekly = [{"week": w, **{s: sum(1 for u in uses if u["skill"] == s and iso_week(u["day"]) == w) for s in SKILLS}}
-              for w in weeks]
+    def count(s, w):
+        return sum(1 for u in uses if u["skill"] == s and iso_week(u["day"]) == w) + MANUAL_USES.get((w, s), 0)
+    weekly = [{"week": w, **{s: count(s, w) for s in SKILLS}} for w in weeks]
     people = {}
     for u in uses:
         if iso_week(u["day"]) == this_week:
             people[u["who"]] = people.get(u["who"], 0) + 1
-    return {"connected": True, "skills": SKILLS, "tracking_from": track_from.isoformat(), "total": len(uses),
-            "this_week": {s: sum(1 for u in uses if u["skill"] == s and iso_week(u["day"]) == this_week) for s in SKILLS},
+    manual = sum(v for (w, _), v in MANUAL_USES.items() if w in weeks)
+    return {"connected": True, "skills": SKILLS, "tracking_from": track_from.isoformat(), "total": len(uses) + manual,
+            "this_week": {s: count(s, this_week) for s in SKILLS},
             "weekly": weekly, "people_this_week": sorted(people.items(), key=lambda x: (-x[1], x[0]))}
