@@ -49,6 +49,7 @@ ACTION_DAYS = 3            # dashboard 2: due within 3 days
 BIGGEST_ROWS = 20
 EMAIL_LOOKBACK_DAYS = 14   # older unanswered mails are history, not today's to-do
 EMAIL_WAIT_BH = 8          # more than 1 business day
+DACHSER_EVERY_MIN = int(os.environ.get("DACHSER_EVERY_MIN", "30") or 30)   # Dachser delivery-note check
 EMAILS_FROM = "2026-10-12"  # clean slate: logistics copy order@ from week 42 on; older waits are dropped
 
 NOT_READY = "Not ready for warehouse"
@@ -246,7 +247,8 @@ def build_emails(rows):
 
 
 # ----------------------------- main ----------------------------------------
-def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=None, weclapp=None, drive=None):
+def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=None, weclapp=None, drive=None,
+         force_dachser=False):
     today = today or common.cph_now().date()
     tl, econ, dachser = tl or ox.TraceLink(), econ or cx.Economic(), dachser or Dachser()
     h = common.Health("live")
@@ -294,7 +296,16 @@ def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=N
     payload["emails_waiting"] = h.section("emails", emails)
     payload["ai_adoption"] = h.section("AI adoption (skill logs)", skill_usage.build,
                                        drive or skill_usage.Drive(), today)
-    payload["dachser_pick"] = h.section("Dachser delivery notes", dachser_notes.build, tl, today)
+    # Dachser check: one call per open order with reservations (~100), so it runs every
+    # DACHSER_EVERY_MIN minutes (default 60: the :00 run); the other runs reuse the last result
+    def dachser_pick():
+        prev = (common.redis_get("lk:live") or {}).get("dachser_pick")
+        if prev and prev.get("checked_at") and not force_dachser:
+            age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(prev["checked_at"])).total_seconds()
+            if age < (DACHSER_EVERY_MIN - 10) * 60:
+                return prev
+        return dachser_notes.build(tl, orders, names, today=today)
+    payload["dachser_pick"] = h.section("Dachser delivery notes", dachser_pick)
     payload["weclapp"] = h.section("weclapp vs TraceLink", weclapp_check.build,
                                    weclapp or weclapp_check.Weclapp(), tl, today)
 

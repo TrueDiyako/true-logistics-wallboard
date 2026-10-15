@@ -25,6 +25,7 @@ jobs:
       GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}   # reads the Claude skill logs
       DACHSER_NOTES_KEY: ${{ secrets.DACHSER_NOTES_KEY }}      # Hannover warehouse: delivery notes
       DACHSER_STATUS_KEY: ${{ secrets.DACHSER_STATUS_KEY }}    # Hannover warehouse: delivery-order status
+      DACHSER_EVERY_MIN: ${{ vars.DACHSER_EVERY_MIN }}         # delivery-note check interval (default 60)
       KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
       KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
     steps:

@@ -259,12 +259,12 @@ const dachserPickPanel: PanelFn = ({ live }) => {
   if (!p) return <Panel title={title} compact><Missing /></Panel>;
   if (!p.connected) return <Panel title={title} compact><div className="missing">Dachser key not connected yet</div></Panel>;
   return (
-    <Panel title={title} compact badge={String(p.count)} badgeBad={p.count > 0} note="oldest delivery note first">
+    <Panel title={title} compact badge={String(p.count)} badgeBad={p.count > 0} note="all customers · checked hourly">
       <List rows={p.orders} max={6} empty="TraceLink is up to date with Dachser"
             render={(r) => (<><span className="grow"><b>{r.customer}</b>
                                 <span className="sub">PO {r.po} · order {r.order} · {fmtNum(r.reserved_cases)} cs</span></span>
-                              <span className={(r.note_days ?? 0) >= 1 ? "bad" : "warn"}>
-                                {r.note_days == null ? "" : r.note_days === 0 ? "today" : `${r.note_days} d`}</span></>)} />
+                              <span className={(r.note_days ?? 0) >= 1 || r.check_by_hand ? "bad" : "warn"}>
+                                {r.check_by_hand ? "check PO" : r.note_days == null ? "" : r.note_days === 0 ? "today" : `${r.note_days} d`}</span></>)} />
     </Panel>
   );
 };

@@ -300,6 +300,32 @@ def test_nightly_backup_skips_when_done_today():
     finally:
         common.redis_get = orig
 
+def test_dachser_check_runs_hourly_and_reuses_in_between():
+    import dachser_notes
+    now = dt.datetime.now(dt.timezone.utc)
+    store = {"lk:live": {"dachser_pick": {"connected": True, "count": 1, "orders": [], "checked_at": (now - dt.timedelta(minutes=30)).isoformat()}}}
+    built = []
+    o_get, o_build = common.redis_get, dachser_notes.build
+    common.redis_get = lambda k: store.get(k)
+    dachser_notes.build = lambda tl, orders, names, today=None: built.append(1) or {"connected": True, "count": 2, "orders": [], "checked_at": now.isoformat()}
+    kw = dict(tl=FakeTL(), econ=FakeEcon(), graph=object(), dachser=FakeDachser(), today=TODAY,
+              plan_source=__import__("test_production").plan_xlsx, weclapp=__import__("test_weclapp").FakeWeclapp([__import__("test_weclapp").WECLAPP]),
+              drive=__import__("test_skill_usage").FakeDrive([]))
+    try:
+        p, _ = live.main(**kw)
+        assert p["dachser_pick"]["count"] == 2 and built == [1]                  # 30 min old: checked (every 30 min)
+        built.clear()
+        store["lk:live"]["dachser_pick"]["checked_at"] = (now - dt.timedelta(minutes=10)).isoformat()
+        p, _ = live.main(**kw)
+        assert p["dachser_pick"]["count"] == 1 and not built                     # 10 min old: reused
+        store["lk:live"]["dachser_pick"]["checked_at"] = (now - dt.timedelta(minutes=25)).isoformat()
+        p, _ = live.main(**kw)
+        assert p["dachser_pick"]["count"] == 2 and built == [1]                  # 25 min old: next half-hour run checks
+        p, _ = live.main(force_dachser=True, **kw)
+        assert built == [1, 1]
+    finally:
+        common.redis_get, dachser_notes.build = o_get, o_build
+
 def test_cph_now_is_naive_local():
     n = common.cph_now()
     assert n.tzinfo is None

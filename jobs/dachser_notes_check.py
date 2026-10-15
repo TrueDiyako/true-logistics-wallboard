@@ -1,18 +1,15 @@
 """
-dachser_notes_check.py - Hannover orders that Dachser has picked (a delivery note exists in
-eLogistics) but that are not yet mirrored as picked in TraceLink (reservations left).
-
-TraceLink: open orders of True Company GmbH (customer 1364), named "<Customer> | <PO>".
-           Only orders with reservations left (unit_order_reserved_f > 0) are checked.
-Dachser:   warehouse delivery notes by reference number 1 = the PO
-           (GET /rest/v2/deliverynotes; 422 "No Documents were found" = not picked yet),
-           plus the warehouse status (GET /rest/v2/deliveryorderstatus) for context:
-           WN sent to warehouse - WK in preparation - WB picking started -
-           WA ready for dispatch - WV loading.
-
-Read-only. Run locally:  python dachser_notes_check.py
-Writes dachser_notes_check.csv (one row per checked order).
+dachser_notes_check.py - local test of the dashboard's Dachser check (self-contained: the
+matching below is a copy of jobs/dachser_notes.py). Every open TraceLink order (all customers)
+with reservations is checked for a Dachser delivery note. Read-only.
+    python dachser_notes_check.py      (in the jobs folder: needs otif_extract.py next to it)
+Writes dachser_notes_check.csv. Do NOT commit this file with keys in it.
 """
+# ============================ CONFIG ======================================
+TRACELINK_TOKEN = "PASTE_TRACELINK_TOKEN_HERE"
+DACHSER_NOTES_KEY = "PASTE_DELIVERYNOTES_KEY_HERE"          # deliverynotes API (required)
+DACHSER_STATUS_KEY = "PASTE_DELIVERYORDERSTATUS_KEY_HERE"   # deliveryorderstatus API ("" = skip)
+# ==========================================================================
 import csv
 import datetime as dt
 import json
@@ -22,155 +19,174 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-# ============================ CONFIG ======================================
-TRACELINK_TOKEN = "PASTE_TRACELINK_TOKEN_HERE"
-DACHSER_NOTES_KEY = "PASTE_DELIVERYNOTES_KEY_HERE"     # key subscribed to "deliverynotes" (needed)
-DACHSER_STATUS_KEY = ""                               # key subscribed to "deliveryorderstatus" (optional:
-                                                      # only adds the Dachser status column; empty = skip)
 DACHSER_BASE = "https://api-gateway.dachser.com"
 GMBH_CUSTOMER = "1364"
-MATCH_DAYS = 3        # one PO on several Dachser orders: delivery dates must be this close
-OUT_DIR = "."
-# ==========================================================================
-
-for _k in ("TRACELINK_TOKEN", "DACHSER_NOTES_KEY", "DACHSER_STATUS_KEY"):
-    _v = str(globals()[_k]).strip().strip('"').strip("'")
-    if _v.startswith("PASTE_") and os.environ.get(_k):
-        _v = os.environ[_k].strip()
-    globals()[_k] = _v
-
+INTERNAL_SKIP = {"0", "2", "1128", "1129", "3019"}       # internal customers (GmbH 1364 is checked)
+MATCH_DAYS = 3
+HORIZON_DAYS = 14   # Dachser picks shortly before shipping: orders starting later aren't checked yet
 STATUS = {"WN": "sent to warehouse", "WK": "in preparation", "WB": "picking started",
           "WA": "ready for dispatch", "WV": "loading", "WF": "order faulty", "0": "no status"}
 
 
-def po_of(name):
-    """'dm drogerie markt GmbH | 1003725225' -> ['1003725225'];
-    'Bela ... | 01673087 - Sour Cola' -> ['01673087 - Sour Cola', '01673087'] (Dachser may hold either)."""
-    if "|" not in (name or ""):
+def refs_of(order):
+    """Dachser reference(s) to try for a TraceLink order, most specific first."""
+    name = str(order.get("name") or "").strip()
+    po = name.split("|", 1)[1].strip() if "|" in name else name
+    if not po:
         return []
-    po = name.split("|", 1)[1].strip()
     out = [po]
     if " - " in po:
         out.append(po.split(" - ", 1)[0].strip())
-    return [p for p in out if p]
+    return [r for r in out if r]
 
 
 def dachser(path, ref):
     key = DACHSER_NOTES_KEY if path.endswith("deliverynotes") else DACHSER_STATUS_KEY
-    q = urllib.parse.urlencode({"reference-number1": ref})
-    req = urllib.request.Request(f"{DACHSER_BASE}{path}?{q}",
+    req = urllib.request.Request(f"{DACHSER_BASE}{path}?{urllib.parse.urlencode({'reference-number1': ref})}",
                                  headers={"X-API-Key": key, "Accept": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
-            time.sleep(0.25)
+            time.sleep(0.25)                                # Dachser: max 5 calls/second
             return r.status, json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
         time.sleep(0.25)
         if e.code == 401 and path.endswith("deliverynotes"):
-            raise SystemExit("Dachser answered 401 on deliverynotes: DACHSER_NOTES_KEY is not subscribed "
-                             "to the delivery notes API.")
+            raise RuntimeError("Dachser answered 401 on deliverynotes: DACHSER_NOTES_KEY is not "
+                               "subscribed to the delivery notes API")
         if e.code == 401:
-            print("  (status key not accepted - Dachser status column left empty)", flush=True)
-            globals()["DACHSER_STATUS_KEY"] = ""
-        return e.code, {}
+            globals()["DACHSER_STATUS_KEY"] = ""             # status column off, check carries on
+        return e.code, {}                                    # 400 odd PO text / 422 nothing found
 
 
-def check(tl, today):
-    orders = tl.list_orders({"customer_id": f"={GMBH_CUSTOMER}", "locked": "=0"})
-    rows = []
+def match(order, refs, calls):
+    """Find the Dachser delivery order for this TraceLink order. Returns a dict or None."""
+    deadline = str(order.get("deadline_date", ""))[:10]
+    for ref in refs:
+        code, body = dachser("/rest/v2/deliverynotes", ref)
+        calls[0] += 1
+        notes = {}
+        for x in body.get("deliveryOrders") or []:
+            ts = [str(d.get("timestamp", "")) for d in (x.get("documents") or [])]
+            if ts:
+                notes[x.get("id")] = max(ts)
+        if not notes:
+            continue
+        status = {}
+        if DACHSER_STATUS_KEY:
+            _, sbody = dachser("/rest/v2/deliveryorderstatus", ref)
+            calls[0] += 1
+            for x in sbody.get("deliveryOrders") or []:
+                st = sorted(x.get("status") or [], key=lambda s: s.get("statusSequence") or 99)
+                ev = (st[0].get("event") or {}) if st else {}
+                status[x.get("id")] = {"delivery": str(x.get("deliveryDate", ""))[:10], "code": ev.get("code", ""),
+                                       "since": str(st[0].get("statusDate", ""))[:16] if st else ""}
+        ids = set(notes)
+        if len(ids) == 1:
+            pick = next(iter(ids))                           # one Dachser order on this PO: it is this one
+        else:                                                # several: the delivery date decides
+            cands = [(abs((dt.date.fromisoformat(status[i]["delivery"]) - dt.date.fromisoformat(deadline)).days), i)
+                     for i in ids if i in status and status[i]["delivery"] and deadline]
+            cands = [c for c in cands if c[0] <= MATCH_DAYS]
+            if not cands:
+                return {"ref": ref, "ambiguous": len(ids)} if not status else None
+            pick = min(cands)[1]
+        s = status.get(pick, {})
+        return {"ref": ref, "dachser_order": pick, "note": notes[pick],
+                "status": f'{s.get("code", "")} {STATUS.get(s.get("code", ""), "")}'.strip(),
+                "status_since": s.get("since", ""), "dachser_delivery": s.get("delivery", "")}
+    return None
+
+
+def check(tl, orders, names=None, today=None):
+    """One row per open order (all customers), with the result of the Dachser check."""
+    names, rows, calls = names or {}, [], [0]
+    horizon = ((today or dt.date.today()) + dt.timedelta(days=HORIZON_DAYS)).isoformat()
     for o in sorted(orders, key=lambda o: o.get("start_date") or ""):
-        if o.get("delete_dt"):
+        cust = str(o.get("customer_id", ""))
+        if o.get("delete_dt") or cust in INTERNAL_SKIP or str(o.get("locked", "0")) == "1":
             continue
-        refs = po_of(o.get("name"))
-        lines = tl.module("genobj", o["order_id"])
-        reserved = sum(float(g.get("unit_order_reserved_f") or 0) for g in lines)
-        picked = sum(float(g.get("unit_order_count_f") or 0) for g in lines)
-        row = {"order": o["number"], "name": o.get("name", ""), "tracelink_state": o.get("state", ""),
-               "start": str(o.get("start_date", ""))[:10], "delivery": str(o.get("deadline_date", ""))[:10],
-               "reserved_cases": round(reserved), "picked_cases": round(picked),
+        name = str(o.get("name") or "")
+        customer = name.split("|", 1)[0].strip() if cust == GMBH_CUSTOMER and "|" in name else names.get(cust, cust)
+        row = {"order": o["number"], "customer": customer, "name": name, "customer_id": cust,
+               "tracelink_state": o.get("state", ""), "start": str(o.get("start_date", ""))[:10],
+               "delivery": str(o.get("deadline_date", ""))[:10], "reserved_cases": 0,
                "dachser_ref": "", "dachser_order": "", "dachser_delivery": "", "dachser_status": "",
-               "status_since": "", "delivery_note": "",
-               "flag": ""}
+               "status_since": "", "delivery_note": "", "flag": ""}
+        refs = refs_of(o)
+        reserved = sum(float(g.get("unit_order_reserved_f") or 0) for g in tl.module("genobj", o["order_id"]))
+        row["reserved_cases"] = round(reserved)
         if not refs:
-            row["flag"] = "no PO in name - not checked"
-            rows.append(row)
-            continue
-        if reserved <= 0:
+            row["flag"] = "no order name - not checked"
+        elif reserved <= 0:
             row["flag"] = "fully picked in TraceLink"
-            rows.append(row)
-            continue
-        deadline = str(o.get("deadline_date", ""))[:10]
-        for ref in refs:
-            code, body = dachser("/rest/v2/deliverynotes", ref)
-            if code != 200 and ref != refs[-1]:
-                continue
-            row["dachser_ref"] = ref
-            # Dachser orders on this PO with their newest delivery-note time
-            notes = {}
-            for x in body.get("deliveryOrders") or []:
-                ts = [str(d.get("timestamp", "")) for d in (x.get("documents") or [])]
-                if ts:
-                    notes[x.get("id")] = max(ts)
-            status = {}
-            if DACHSER_STATUS_KEY:
-                scode, sbody = dachser("/rest/v2/deliveryorderstatus", ref)
-                for x in sbody.get("deliveryOrders") or []:
-                    st = sorted(x.get("status") or [], key=lambda s: s.get("statusSequence") or 99)
-                    ev = (st[0].get("event") or {}) if st else {}
-                    status[x.get("id")] = {"delivery": str(x.get("deliveryDate", ""))[:10],
-                                           "code": ev.get("code", ""), "since": str(st[0].get("statusDate", ""))[:16] if st else ""}
-            ids = set(notes) | set(status)
-            pick = None
-            if len(ids) == 1:
-                # one Dachser order on this PO: it is this order, whenever TraceLink created it
-                pick = next(iter(ids))
-            elif len(ids) > 1:
-                # one PO, several Dachser orders (seen: Bela 01673087 x3): the delivery date decides
-                cands = [(abs((dt.date.fromisoformat(v["delivery"]) - dt.date.fromisoformat(deadline)).days), i)
-                         for i, v in status.items() if v["delivery"] and deadline]
-                cands = [c for c in cands if c[0] <= MATCH_DAYS]
-                if cands:
-                    pick = min(cands)[1]
-                elif not status:
-                    row["flag"] = f"PO on {len(ids)} Dachser orders - check by hand"
-            if pick:
-                row["dachser_order"] = pick
-                row["delivery_note"] = notes.get(pick, "")
-                if pick in status:
-                    v = status[pick]
-                    row["dachser_status"] = f'{v["code"]} {STATUS.get(v["code"], "")}'.strip()
-                    row["status_since"] = v["since"]
-                    row["dachser_delivery"] = v["delivery"]
-            break
-        if row["flag"].startswith("PO on"):
-            rows.append(row)
-            continue
-        row["flag"] = ("DELIVERY NOTE - NOT PICKED IN TRACELINK" if row["delivery_note"]
-                       else "not picked by Dachser yet")
+        elif row["start"] and row["start"] > horizon:
+            row["flag"] = f"starts after {horizon} - not checked yet"
+        else:
+            m = match(o, refs, calls)
+            if m is None:
+                row["flag"] = "no Dachser delivery note"
+            elif m.get("ambiguous"):
+                row.update(dachser_ref=m["ref"], flag=f"PO on {m['ambiguous']} Dachser orders - check by hand")
+            else:
+                row.update(dachser_ref=m["ref"], dachser_order=m["dachser_order"], delivery_note=m["note"],
+                           dachser_status=m["status"], status_since=m["status_since"],
+                           dachser_delivery=m["dachser_delivery"], flag="DELIVERY NOTE - NOT PICKED IN TRACELINK")
         rows.append(row)
-    return rows
+    return rows, calls[0]
+
+
+def build(tl, orders, names, now_utc=None):
+    """Payload for the dashboard: the flagged orders, oldest delivery note first."""
+    if not DACHSER_NOTES_KEY:
+        return {"connected": False}
+    rows, calls = check(tl, orders, names)
+    now_utc = now_utc or dt.datetime.now(dt.timezone.utc)
+    hits = []
+    for r in rows:
+        if not r["flag"].startswith(("DELIVERY NOTE", "PO on")):
+            continue
+        try:
+            note = dt.datetime.fromisoformat(r["delivery_note"].replace("Z", "+00:00")) if r["delivery_note"] else None
+            if note and note.tzinfo is None:
+                note = note.replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            note = None
+        hits.append({"order": r["order"], "customer": r["customer"], "po": r["dachser_ref"],
+                     "reserved_cases": r["reserved_cases"], "note": r["delivery_note"],
+                     "dachser_status": r["dachser_status"], "check_by_hand": r["flag"].startswith("PO on"),
+                     "note_days": (now_utc.date() - note.date()).days if note else None})
+    hits.sort(key=lambda h: h["note"] or "9")
+    return {"connected": True, "count": len(hits), "orders": hits, "checked": sum(1 for r in rows if r["dachser_ref"]
+            or r["flag"] == "no Dachser delivery note"), "dachser_calls": calls, "status_key": bool(DACHSER_STATUS_KEY),
+            "checked_at": now_utc.isoformat()}
 
 
 def main():
-    import otif_extract as ox                  # the same TraceLink client the dashboard uses
-    ox.TRACELINK_TOKEN = TRACELINK_TOKEN
-    today = dt.date.today()
-    print("Reading open True Company GmbH orders from TraceLink and checking Dachser ...", flush=True)
-    rows = check(ox.TraceLink(), today)
-    with open(os.path.join(OUT_DIR, "dachser_notes_check.csv"), "w", newline="", encoding="utf-8-sig") as f:
+    global DACHSER_STATUS_KEY
+    import otif_extract as ox
+    ox.TRACELINK_TOKEN = TRACELINK_TOKEN.strip()
+    if DACHSER_STATUS_KEY.startswith("PASTE_"):
+        DACHSER_STATUS_KEY = ""
+    tl = ox.TraceLink()
+    print("Reading open TraceLink orders and checking each against Dachser ...", flush=True)
+    orders = tl.list_orders({"locked": "=0", "order_group_id": f"={ox.SALES_GROUP}"})
+    rows, calls = check(tl, orders, today=dt.date.today())
+    with open("dachser_notes_check.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()) if rows else ["order"], delimiter=";")
         w.writeheader()
         w.writerows(rows)
-    hits = [r for r in rows if r["flag"].startswith("DELIVERY NOTE")]
-    print(f"\n{len(rows)} open orders - {len(hits)} with a Dachser delivery note but still reserved in TraceLink:\n")
-    for r in hits:
-        print(f'  {r["order"]}  {r["name"][:48]:<48}  note {r["delivery_note"][:16]}  '
-              f'Dachser: {r["dachser_status"]:<24} reserved {r["reserved_cases"]} cs')
-    others = {}
+    hits = [r for r in rows if r["flag"].startswith(("DELIVERY NOTE", "PO on"))]
+    print(f"\n{len(rows)} open orders checked with {calls} Dachser calls - "
+          f"{len(hits)} with a delivery note but still reserved in TraceLink:\n")
+    for r in sorted(hits, key=lambda r: r["delivery_note"] or "9"):
+        print(f'  {r["order"]}  cust {r["customer_id"]:<5} {r["name"][:44]:<44} start {r["start"]}  '
+              f'note {r["delivery_note"][:16]:<16} {r["dachser_status"]:<22} reserved {r["reserved_cases"]} cs  '
+              f'{"" if r["flag"].startswith("DELIVERY") else r["flag"]}')
+    other = {}
     for r in rows:
-        if not r["flag"].startswith("DELIVERY NOTE"):
-            others[r["flag"]] = others.get(r["flag"], 0) + 1
-    print("\nOther orders: " + ", ".join(f"{v} {k}" for k, v in others.items()))
+        if r not in hits:
+            other[r["flag"]] = other.get(r["flag"], 0) + 1
+    print("\nOther orders: " + ", ".join(f"{v} {k}" for k, v in sorted(other.items(), key=lambda x: -x[1])))
     print("\nWrote dachser_notes_check.csv")
 
 
