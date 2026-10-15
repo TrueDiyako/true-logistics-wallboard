@@ -159,6 +159,21 @@ def test_picked_orders_turn_green_and_left_comes_from_the_batch():
         [("BEBIDAS CINCO CERO SL", 20, True), ("Humble Group USA", 100, False)]
     assert us["alloc"][1]["ready"] and us["free"] == 319     # 419 left - 100 pending picking
 
+def test_gum_and_mints_production_is_ignored():
+    # real (15 Oct): gum/mints production orders with the same BBD naming, articles 4.13, 103, 106.16
+    class TLGum(FakeTLProd):
+        ORDERS = {"14/04-28%": [{"order_id": "77", "name": "14/04-28 (DK)", "delete_dt": None},
+                                {"order_id": "78", "name": "14/04-28 (EN/DK)", "delete_dt": None}]}
+        LINES = {"77": [{"object_id": "1", "name": "103", "output_product": "1", "unit_order_produced_f": "916"},
+                        {"object_id": "2", "name": "4.13", "output_product": "1", "unit_order_produced_f": "208"},
+                        {"object_id": "3", "name": "106.16", "output_product": "1", "unit_order_produced_f": "469"}],
+                 "78": [{"object_id": "4", "name": "6310", "output_product": "1", "unit_order_produced_f": "6500"}]}
+        BATCHES = {}
+    a = p.fetch_actuals(TLGum(), [dt.date(2026, 10, 14)])
+    assert list(a) == [("2026-10-14", "6310")]
+    assert [p.is_dates_sku(x) for x in ("6606", "6206", "103", "4.13", "106.16", "6106", "60061")] == \
+        [True, True, False, False, False, False, False]
+
 def test_unplanned_production_is_shown():
     out = p.build(plan_42(), [], dt.date(2026, 10, 13), {("2026-10-12", "6309"): 250})
     extra = [r for r in out["lines"]["Laudenberg"] if r.get("unplanned")]

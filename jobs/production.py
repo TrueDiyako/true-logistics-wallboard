@@ -48,6 +48,13 @@ def bbd_name(day):
     return f"{d:02d}/{m:02d}-{y % 100:02d}"
 
 
+def is_dates_sku(sku):
+    """True Dates finished goods: language prefix (60, 62, 63, 64, 66, 67) + 2-digit flavour code.
+    Gum and mints production orders use the same BBD naming (seen: 4.13, 103, 106.16) - not ours."""
+    sku = str(sku or "").strip()
+    return len(sku) == 4 and sku.isdigit() and sku[:2] in LANG_PREFIX.values()
+
+
 def fetch_actuals(tl, days):
     """{(day iso, sku): {"cases", "left", "picked", "batches"}} for the given production days.
     cases = unit_order_produced_f of the production order's output line; the batch it created
@@ -59,7 +66,8 @@ def fetch_actuals(tl, days):
         for o in tl.list_orders({"name": f"{prefix}%"}):
             if o.get("delete_dt") or not str(o.get("name", "")).startswith(prefix + " ("):
                 continue
-            outputs = [g for g in tl.module("genobj", o["order_id"]) if str(g.get("output_product")) == "1"]
+            outputs = [g for g in tl.module("genobj", o["order_id"])
+                       if str(g.get("output_product")) == "1" and is_dates_sku(g.get("name"))]
             batches = tl.objects("batch_genobj", {"src_order_id": f"={o['order_id']}"}) if outputs else []
             for g in outputs:
                 q = float(g.get("unit_order_produced_f") or 0)
