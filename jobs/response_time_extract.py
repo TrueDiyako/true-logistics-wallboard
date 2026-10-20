@@ -111,6 +111,12 @@ FALLBACK_DAYS = 10
 #     text), within FALLBACK_DAYS, or
 #   - is sent within SAME_COMPANY_BH business hours (any subject).
 SAME_COMPANY_BH = 8
+# Replies the job cannot see (sent with "Reply" instead of "Reply all", so order@ was left
+# out and the customer never wrote back). Checked by hand in the sender's Outlook.
+# (customer address, subject, reply time Copenhagen "YYYY-MM-DD HH:MM", who replied)
+MANUAL_REPLIES = [
+    ("varga.martin@prezentex.hu", "192026 Lidl", "2026-10-15 11:41", "frederikke@truecompany.com"),
+]
 # Not customers: suppliers' own confirmations, newsletters, service vendors
 NON_CUSTOMER_DOMAINS = {
     "exa.ai", "hive.app", "stamegna.eu", "cma-cgm.com", "pakkeshop.dk",
@@ -155,6 +161,8 @@ for _k in ('TENANT_ID', 'CLIENT_ID', 'CLIENT_SECRET'):
 
 import csv
 import http.client
+
+import common
 import datetime as dt
 import json
 import os
@@ -670,6 +678,16 @@ def build_waits(messages, now_utc, body_of=None):
                     w.update(replied=when or m["_t"], replied_by=person, outside=True,
                              via="without order@ in copy" + ("" if when else " (time = customer follow-up)"))
                     break
+
+    # replies confirmed by hand (see MANUAL_REPLIES)
+    for cust, subj, when, who in MANUAL_REPLIES:
+        local = dt.datetime.strptime(when, "%Y-%m-%d %H:%M")
+        utc = (local - dt.timedelta(hours=common.cph_offset_hours(local.replace(tzinfo=dt.timezone.utc))))
+        utc = utc.replace(tzinfo=dt.timezone.utc)
+        for w in waits:
+            if (w["replied"] is None and w["customer"].lower() == cust.lower()
+                    and norm_subject(w["subject"]) == norm_subject(subj) and w["received"] < utc):
+                w.update(replied=utc, replied_by=who, outside=True, via="confirmed by hand (Reply instead of Reply all)")
 
     rows = []
     for w in waits:

@@ -302,6 +302,18 @@ def test_graph_gzip_and_cut_off_page_is_fetched_again():
     finally:
         rx.urllib.request.urlopen, rx.time.sleep = orig, sleep
 
+def test_manual_reply_override_prezentex_lidl():
+    # real (14 Oct 2026): "192026 Lidl" to order@; Frederikke replied 15 Oct 11:41 with "Reply" (order@ left out),
+    # Martin never wrote back -> invisible to the job, confirmed by hand in her Outlook
+    po = M("lidl", "varga.martin@prezentex.hu", "2026-10-14T12:47:11Z", "192026 Lidl",
+           to=["order@truecompany.com"], cc=["Frederikke@truecompany.com", "jacob@truecompany.com"])
+    other = M("x", "varga.martin@prezentex.hu", "2026-10-14T07:21:44Z", "182026", to=["order@truecompany.com"])
+    w = {x["subject"]: x for x in waits([po, other])}
+    lidl = w["192026 Lidl"]
+    assert lidl["answered"] and lidl["replied_local"] == "2026-10-15 11:41" and lidl["without_order_copy"]
+    assert lidl["replied_via"].startswith("confirmed by hand") and lidl["replied_by"] == "frederikke@truecompany.com"
+    assert not w["182026"]["answered"]                       # only the listed email is overridden
+
 def test_reg_domain():
     assert rx.reg_domain("purchase@mg.firtal.com") == "firtal.com"
     assert rx.reg_domain("a@stiller.co.uk") == "stiller.co.uk"

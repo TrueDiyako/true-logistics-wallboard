@@ -17,7 +17,7 @@ import urllib.request
 import common
 
 FOLDER_ID = "1IySoDRSkBnAqzRP8R2fiLfJUuwzj4JxH"          # Internal operations / Claude logs
-SKILLS = ["tracelink-order-closeout", "internal-purchase", "process-weclapp-order"]
+SKILLS = ["tracelink-order-closeout", "internal-purchase", "process-weclapp-order", "pick-3pl-goods"]
 # uses that happened without a log file, added by hand: {(ISO week, skill): count}
 MANUAL_USES = {("2026-W42", "internal-purchase"): 24}     # logged by hand on 14 Oct 2026
 TRACK_FROM = dt.date(2026, 10, 5)                           # week 41 2026 (logging started in week 42)

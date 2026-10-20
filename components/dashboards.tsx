@@ -95,10 +95,11 @@ const shortsPanel: PanelFn = ({ kpi }) => {
 
 // AI adoption: use of the three Claude skills, per week from week 42 (live job, skill logs on Drive)
 const SKILL_COLORS: Record<string, string> = {
-  "tracelink-order-closeout": "#5E6B2E", "internal-purchase": "#8C5B3E", "process-weclapp-order": "#C9922E" };
+  "tracelink-order-closeout": "#5E6B2E", "internal-purchase": "#8C5B3E", "process-weclapp-order": "#C9922E",
+  "pick-3pl-goods": "#4F7A80" };
 const SKILL_LABEL: Record<string, string> = {
   "tracelink-order-closeout": "order closeouts", "internal-purchase": "internal purchases",
-  "process-weclapp-order": "weclapp orders" };
+  "process-weclapp-order": "weclapp orders", "pick-3pl-goods": "3PL picks" };
 const aiPanel: PanelFn = ({ live }) => {
   const a = live?.ai_adoption;
   if (!a) return <Panel title="AI adoption"><Missing /></Panel>;
