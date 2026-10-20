@@ -96,7 +96,20 @@ def build(drive, today, track_from=TRACK_FROM):
         if day < track_from or day > today:
             continue
         owner = (f.get("owners") or [{}])[0]
-        uses.append({"skill": m["skill"], "day": day, "who": person(owner.get("emailAddress"), owner.get("displayName"))})
+        uses.append({"skill": m["skill"], "day": day, "hm": m["hm"], "ref": (m["ref"] or "").strip().lower(),
+                     "who": person(owner.get("emailAddress"), owner.get("displayName"))})
+    # one use per skill and order: a re-run on the same order (seen: 79 closeout logs for 59 orders,
+    # e.g. 1022905 logged 19 Oct 14:05, 14:06 and 20 Oct 09:21) counts once, at its first log.
+    # Logs without a reference are all kept.
+    uses.sort(key=lambda u: (u["day"], u["hm"]))
+    seen, unique = set(), []
+    for u in uses:
+        key = (u["skill"], u["ref"])
+        if u["ref"] and key in seen:
+            continue
+        seen.add(key)
+        unique.append(u)
+    uses = unique
     weeks, wk = [], track_from - dt.timedelta(days=track_from.weekday())
     while wk <= today:
         weeks.append(iso_week(wk))

@@ -50,6 +50,21 @@ def test_pick_3pl_goods_is_counted():
     assert out["weekly"][1]["pick-3pl-goods"] == 1 and out["weekly"][2]["pick-3pl-goods"] == 1
     assert out["this_week"]["pick-3pl-goods"] == 1
 
+def test_repeated_logs_on_the_same_order_count_once():
+    # real (19-20 Oct): 1022905 closed out 19 Oct 14:05, 14:06 and again 20 Oct 09:21; 1022927 with a broken "0000" time
+    rep = [F("Skill usage log - tracelink-order-closeout - 2026-10-19 1405 - 1022905.txt", "frederikke.truegum@gmail.com"),
+           F("Skill usage log - tracelink-order-closeout - 2026-10-19 1406 - 1022905.txt", "frederikke.truegum@gmail.com"),
+           F("Skill usage log - tracelink-order-closeout - 2026-10-20 0921 - 1022905.txt", "frederikke.truegum@gmail.com"),
+           F("Skill usage log - tracelink-order-closeout - 2026-10-19 0000 - 1022927.txt", "frederikke.truegum@gmail.com"),
+           F("Skill usage log - tracelink-order-closeout - 2026-10-19 1406 - 1022927.txt", "frederikke.truegum@gmail.com"),
+           F("Skill usage log - tracelink-order-closeout - 2026-10-20 1553 - 1023104.txt", "frederikke.truegum@gmail.com"),
+           F("Skill usage log - pick-3pl-goods - 2026-10-20 1135 - 1022905.txt", "valentina.truecompany@gmail.com"),   # other skill: counts
+           F("Skill usage log - internal-purchase - 2026-10-20 1001.txt", "andreas@truecompany.com"),                 # no reference: kept
+           F("Skill usage log - internal-purchase - 2026-10-20 1002.txt", "andreas@truecompany.com")]
+    out = su.build(FakeDrive(rep), dt.date(2026, 10, 21))
+    assert out["this_week"]["tracelink-order-closeout"] == 3            # 1022905, 1022927, 1023104
+    assert out["this_week"]["pick-3pl-goods"] == 1 and out["this_week"]["internal-purchase"] == 2
+
 def test_not_connected_without_secret():
     out = su.build(su.Drive(sa_json=""), dt.date(2026, 10, 13))
     assert out == {"connected": False, "skills": su.SKILLS}
