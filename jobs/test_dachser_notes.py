@@ -108,6 +108,54 @@ def test_orders_starting_after_14_days_are_not_checked():
     finally:
         ORDERS.pop(); LINES.pop("1340009")
 
+def _with_failures(fail):
+    """fake() but timing out for refs in `fail` ({ref: number of timeouts, or -1 = always})."""
+    left = dict(fail)
+    def f(req, timeout=60):
+        ref = up.parse_qs(up.urlparse(req.full_url).query)["reference-number1"][0]
+        if ref in left and left[ref] != 0:
+            left[ref] -= 1
+            raise TimeoutError("The read operation timed out")        # real error of 21 Oct 2026
+        return fake(req, timeout)
+    return f
+
+def _run_with(opener):
+    CALLS.clear(); dn.DACHSER_NOTES_KEY, dn.DACHSER_STATUS_KEY = "NOTES", "STATUS"
+    orig, sleep = dn.urllib.request.urlopen, dn.time.sleep
+    dn.urllib.request.urlopen, dn.time.sleep = opener, (lambda s: None)
+    try:
+        return dn.build(TL(), [dict(o) for o in ORDERS], NAMES, dt.datetime(2026, 10, 14, 9, 30, tzinfo=dt.timezone.utc),
+                        today=dt.date(2026, 10, 14))
+    finally:
+        dn.urllib.request.urlopen, dn.time.sleep = orig, sleep
+
+def test_timeout_is_retried():
+    out = _run_with(_with_failures({"1003725502": 2}))           # two timeouts, third try answers
+    assert "1023038" in {o["order"] for o in out["orders"]} and out["no_answer"] == 0
+
+def test_one_order_without_answer_is_skipped_not_fatal():
+    out = _run_with(_with_failures({"IOR8530": -1}))             # never answers
+    assert out["no_answer"] == 1 and "1023050" not in {o["order"] for o in out["orders"]}
+    assert {"1023019", "1023038", "1023051"} <= {o["order"] for o in out["orders"]}   # the rest still checked
+
+def test_dachser_down_fails_the_section():
+    refs = ["1003725502", "1075849563", "01673087 - Sour Cola", "01673087", "2070020023", "IOR8530",
+            "EB66 - Truck 56", "EB66", "4500078000"]
+    try:
+        _run_with(_with_failures({r: -1 for r in refs})); assert False
+    except RuntimeError as e:
+        assert "did not answer" in str(e)
+
+def test_server_error_is_retried():
+    left = {"n": 1}
+    def f(req, timeout=60):
+        if "1075849563" in req.full_url and left["n"]:
+            left["n"] -= 1
+            raise urllib.error.HTTPError(req.full_url, 503, "x", {}, io.BytesIO(b""))
+        return fake(req, timeout)
+    out = _run_with(f)
+    assert "1023019" in {o["order"] for o in out["orders"]}
+
 def test_not_connected_and_wrong_key():
     assert run(notes_key="") == {"connected": False}
     def deny(req, timeout=60): raise urllib.error.HTTPError(req.full_url, 401, "x", {}, io.BytesIO(b""))

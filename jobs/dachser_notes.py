@@ -27,6 +27,9 @@ DACHSER_STATUS_KEY = os.environ.get("DACHSER_STATUS_KEY", "").strip()
 GMBH_CUSTOMER = "1364"
 INTERNAL_SKIP = {"0", "2", "1128", "1129", "3019"}       # internal customers (GmbH 1364 is checked)
 MATCH_DAYS = 3
+TIMEOUT_S = 30         # per Dachser call
+RETRIES = 2            # after a timeout / connection error / 5xx
+MAX_NO_ANSWER = 0.25   # more orders than this share without an answer = Dachser is down: fail the section
 HORIZON_DAYS = 14   # Dachser picks shortly before shipping: orders starting later aren't checked yet
 STATUS = {"WN": "sent to warehouse", "WK": "in preparation", "WB": "picking started",
           "WA": "ready for dispatch", "WV": "loading", "WF": "order faulty", "0": "no status"}
@@ -44,22 +47,35 @@ def refs_of(order):
     return [r for r in out if r]
 
 
+class NoAnswer(Exception):
+    """Dachser didn't answer (timeout / connection / 5xx) after the retries."""
+
+
 def dachser(path, ref):
     key = DACHSER_NOTES_KEY if path.endswith("deliverynotes") else DACHSER_STATUS_KEY
     req = urllib.request.Request(f"{DACHSER_BASE}{path}?{urllib.parse.urlencode({'reference-number1': ref})}",
                                  headers={"X-API-Key": key, "Accept": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            time.sleep(0.25)                                # Dachser: max 5 calls/second
-            return r.status, json.loads(r.read() or b"{}")
-    except urllib.error.HTTPError as e:
-        time.sleep(0.25)
-        if e.code == 401 and path.endswith("deliverynotes"):
-            raise RuntimeError("Dachser answered 401 on deliverynotes: DACHSER_NOTES_KEY is not "
-                               "subscribed to the delivery notes API")
-        if e.code == 401:
-            globals()["DACHSER_STATUS_KEY"] = ""             # status column off, check carries on
-        return e.code, {}                                    # 400 odd PO text / 422 nothing found
+    last = None
+    for attempt in range(1 + RETRIES):
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT_S) as r:
+                time.sleep(0.25)                                # Dachser: max 5 calls/second
+                return r.status, json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            time.sleep(0.25)
+            if e.code >= 500:                                   # Dachser-side error: try again
+                last = e
+            else:
+                if e.code == 401 and path.endswith("deliverynotes"):
+                    raise RuntimeError("Dachser answered 401 on deliverynotes: DACHSER_NOTES_KEY is not "
+                                       "subscribed to the delivery notes API")
+                if e.code == 401:
+                    globals()["DACHSER_STATUS_KEY"] = ""         # status column off, check carries on
+                return e.code, {}                                # 400 odd PO text / 422 nothing found
+        except (TimeoutError, OSError, ValueError) as e:        # timeout, connection reset, cut-off answer
+            last = e                                            # (seen 21 Oct: one read timeout failed the run)
+        time.sleep(2 * (attempt + 1))
+    raise NoAnswer(f"{type(last).__name__}: {last}")
 
 
 def match(order, refs, calls):
@@ -126,7 +142,12 @@ def check(tl, orders, names=None, today=None):
         elif row["start"] and row["start"] > horizon:
             row["flag"] = f"starts after {horizon} - not checked yet"
         else:
-            m = match(o, refs, calls)
+            try:
+                m = match(o, refs, calls)
+            except NoAnswer as e:
+                row["flag"] = f"Dachser did not answer - checked again next run ({e})"
+                rows.append(row)
+                continue
             if m is None:
                 row["flag"] = "no Dachser delivery note"
             elif m.get("ambiguous"):
@@ -144,6 +165,12 @@ def build(tl, orders, names, now_utc=None, today=None):
     if not DACHSER_NOTES_KEY:
         return {"connected": False}
     rows, calls = check(tl, orders, names, today)
+    asked = [r for r in rows if r["dachser_ref"] or r["flag"] == "no Dachser delivery note"
+             or r["flag"].startswith("Dachser did not answer")]
+    no_answer = [r for r in rows if r["flag"].startswith("Dachser did not answer")]
+    if asked and len(no_answer) > max(3, MAX_NO_ANSWER * len(asked)):
+        raise RuntimeError(f"Dachser did not answer for {len(no_answer)} of {len(asked)} orders "
+                           f"(e.g. {no_answer[0]['flag']})")
     now_utc = now_utc or dt.datetime.now(dt.timezone.utc)
     hits = []
     for r in rows:
@@ -162,4 +189,4 @@ def build(tl, orders, names, now_utc=None, today=None):
     hits.sort(key=lambda h: h["note"] or "9")
     return {"connected": True, "count": len(hits), "orders": hits, "checked": sum(1 for r in rows if r["dachser_ref"]
             or r["flag"] == "no Dachser delivery note"), "dachser_calls": calls, "status_key": bool(DACHSER_STATUS_KEY),
-            "checked_at": now_utc.isoformat()}
+            "checked_at": now_utc.isoformat(), "no_answer": len(no_answer)}

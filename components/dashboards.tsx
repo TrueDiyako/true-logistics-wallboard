@@ -260,7 +260,7 @@ const dachserPickPanel: PanelFn = ({ live }) => {
   if (!p) return <Panel title={title} compact><Missing /></Panel>;
   if (!p.connected) return <Panel title={title} compact><div className="missing">Dachser key not connected yet</div></Panel>;
   return (
-    <Panel title={title} compact badge={String(p.count)} badgeBad={p.count > 0} note="all customers · checked hourly">
+    <Panel title={title} compact badge={String(p.count)} badgeBad={p.count > 0} note={"all customers · checked every 30 min" + (p.no_answer ? ` · ${p.no_answer} not answered by Dachser, retried next run` : "")}>
       <List rows={p.orders} max={6} empty="TraceLink is up to date with Dachser"
             render={(r) => (<><span className="grow"><b>{r.customer}</b>
                                 <span className="sub">PO {r.po} · order {r.order} · {fmtNum(r.reserved_cases)} cs</span></span>
