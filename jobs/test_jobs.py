@@ -176,7 +176,10 @@ def test_four_accounts_customer_id_and_timeouts():
     finally:
         live.urllib.request.urlopen = orig
     env = {"DACHSER_TT_47379200": "KH", "DACHSER_TT_47222882": "K3", "DACHSER_API_KEY": "KH", "DACHSER_API_KEY_DK": "OLD"}
-    orig_env = dict(live.os.environ); live.os.environ.update(env)
+    orig_env = dict(live.os.environ)
+    for var in [v for v in live.os.environ if v.startswith("DACHSER_TT_") or v.startswith("DACHSER_API_KEY")]:
+        del live.os.environ[var]                 # on GitHub the real secrets are set: test with only these
+    live.os.environ.update(env)
     try:
         assert live._dachser_keys() == [("47379200", "KH"), ("47222882", "K3"), ("", "OLD")]   # no duplicate key
     finally:
