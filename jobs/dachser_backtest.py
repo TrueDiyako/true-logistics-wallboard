@@ -28,9 +28,13 @@ import urllib.request
 
 # ============================ CONFIG ======================================
 TRACELINK_TOKEN = "PASTE_TRACELINK_TOKEN_HERE"
-DACHSER_API_KEY = "PASTE_DACHSER_TRACK_AND_TRACE_KEY_HERE"
-DACHSER_CUSTOMER_ID = ""         # "" = all accounts this key can see (finds Glostrup bookings
-                                 # made under another Dachser customer number); "47379200" = Hannover only
+# One Track & Trace key per Dachser customer number (empty = account skipped)
+ACCOUNTS = {
+    "47379200": "PASTE_KEY_HANNOVER",
+    "72695099": "PASTE_KEY_72695099",
+    "47133021": "PASTE_KEY_47133021",
+    "47222882": "PASTE_KEY_47222882",
+}
 DACHSER_URL = "https://api-gateway.dachser.com/rest/v2/shipmenthistory"
 SALES_GROUP = "129"
 LOOKBACK_DAYS = 90            # Dachser keeps 180 days of history
@@ -39,7 +43,7 @@ INTERNAL_CUSTOMERS = {"0", "2", "1128", "1129", "3019", "1364"}
 OUT_DIR = "."
 # ==========================================================================
 
-for _k in ("TRACELINK_TOKEN", "DACHSER_API_KEY"):
+for _k in ("TRACELINK_TOKEN",):
     _v = str(globals()[_k]).strip().strip('"').strip("'")
     if _v.startswith("PASTE_") and os.environ.get(_k):
         _v = os.environ[_k].strip()
@@ -63,24 +67,35 @@ def shipped_orders():
 
 
 def lookup(ref):
-    params = {"tracking-number": ref}
-    if DACHSER_CUSTOMER_ID:
-        params["customer-id"] = DACHSER_CUSTOMER_ID
-    q = urllib.parse.urlencode(params)
-    req = urllib.request.Request(f"{DACHSER_URL}?{q}", headers={"X-API-Key": DACHSER_API_KEY,
-                                                                "Accept": "application/json"})
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
+    """Ask every account; shipments are tagged with the customer number that found them."""
+    found, last = [], 422
+    for cust, key in ACCOUNTS.items():
+        if not key or key.startswith("PASTE_"):
+            continue
+        q = urllib.parse.urlencode({"tracking-number": ref, "customer-id": cust})
+        req = urllib.request.Request(f"{DACHSER_URL}?{q}", headers={"X-API-Key": key, "Accept": "application/json"})
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    time.sleep(0.25)
+                    ships = json.loads(r.read() or b"{}").get("shipments") or []
+                    for sh in ships:
+                        sh["_account"] = cust
+                    found += ships
+                    last = r.status
+                    break
+            except urllib.error.HTTPError as e:
                 time.sleep(0.25)
-                return r.status, json.loads(r.read() or b"{}").get("shipments") or []
-        except urllib.error.HTTPError as e:
-            time.sleep(0.25)
-            if e.code == 429:
-                time.sleep(5 * (attempt + 1))
-                continue
-            return e.code, []
-    return 429, []
+                if e.code == 429 or e.code >= 500:
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                if e.code == 401:
+                    print(f"  key for {cust} refused (401) - check it", flush=True)
+                    ACCOUNTS[cust] = ""
+                break
+            except (TimeoutError, OSError):
+                time.sleep(3 * (attempt + 1))
+    return (200 if found else last), found
 
 
 def events(ship, code):
@@ -121,7 +136,7 @@ def main():
                 left, dlv = events(s, "A"), events(s, "Z")
                 cons = s.get("consignee") or {}
                 snd = s.get("consignor") or {}
-                row["consignor_id"] = snd.get("id", "")
+                row["consignor_id"] = s.get("_account") or snd.get("id", "")
                 row["shipped_from"] = " ".join(snd.get("names") or []) + ", " + \
                     (snd.get("addressInformation") or {}).get("city", "")
                 row.update(dachser="booked", booked=d(s["shipmentDate"]),
@@ -151,7 +166,7 @@ def main():
     for r in hit:
         key = (r["consignor_id"], r["shipped_from"])
         origins[key] = origins.get(key, 0) + 1
-    print("Shipped from (Dachser consignor):")
+    print("Found by Dachser account (customer number):")
     for (cid, frm), n in sorted(origins.items(), key=lambda x: -x[1]):
         print(f"  {n:>4}  customer no. {cid:<10} {frm}")
     if lead:

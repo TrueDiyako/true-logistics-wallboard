@@ -25,6 +25,7 @@ import urllib.request
 TRACELINK_TOKEN = "PASTE_TRACELINK_TOKEN_HERE"
 DACHSER_API_KEY = "PASTE_DACHSER_TRACK_AND_TRACE_KEY_HERE"   # the Track & Trace key
 DACHSER_CUSTOMER_ID = "47379200"
+LOOKUP_CUSTOMER_ID = "47222882"   # account for "python dachser_probe.py <reference>" (Glostrup: 47222882)
 DACHSER_BASE = "https://api-gateway.dachser.com"
 # Dachser sells these as separate subscriptions with separate keys. Both take the
 # same tracking-number and return the same shipments; history adds all events.
@@ -149,7 +150,7 @@ def lookup_refs(refs):
     """python dachser_probe.py <ref> [<ref> ...] - look up any references (consignment
     number, SSCC, PO, delivery note) on all accounts the key can see."""
     global DACHSER_CUSTOMER_ID, ENDPOINT
-    DACHSER_CUSTOMER_ID = ""
+    DACHSER_CUSTOMER_ID = LOOKUP_CUSTOMER_ID
     print(f"Dachser key used: {mask(DACHSER_API_KEY)} from {KEY_SOURCE['DACHSER_API_KEY']}")
     out = {}
     for ref in refs:
@@ -169,6 +170,13 @@ def lookup_refs(refs):
                   f" -> {' '.join(cns.get('names') or [])}")
             print(f"    references: " + ", ".join(f"{r.get('code')}={r.get('value')}" for r in sh.get("references") or []))
             print(f"    latest status: {(last.get('event') or {}).get('description', '')} {last.get('statusDate', '')}")
+            print("    all events (oldest first):")
+            for ev in sorted(sh.get("status") or [], key=lambda e: str(e.get("statusDate", ""))):
+                e = ev.get("event") or {}
+                print(f"      {str(ev.get('statusDate', ''))[:19]:<19}  {e.get('code', ''):<3} {e.get('description', '')}"
+                      f"  {(ev.get('location') or {}).get('name', '') if isinstance(ev.get('location'), dict) else ''}")
+            other = {k: v for k, v in sh.items() if k not in ("status", "references", "consignor", "consignee")}
+            print("    other fields: " + ", ".join(f"{k}={v}" for k, v in other.items())[:400])
         out[ref] = body
     with open(os.path.join(OUT_DIR, "dachser_lookup_raw.json"), "w", encoding="utf-8") as f:
         json.dump(out, f, indent=1, ensure_ascii=False)

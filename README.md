@@ -129,6 +129,15 @@ Setup:
   days), otherwise shown as "check PO". About one call per order, so the check runs every
   `DACHSER_EVERY_MIN` minutes (repository variable, default 60); runs in between reuse the result.
   Secrets `DACHSER_NOTES_KEY`, `DACHSER_STATUS_KEY`. Local test: `jobs/dachser_notes_check.py`.
+- **Dashboard 4, transport**: Dachser Track & Trace on four accounts (secrets DACHSER_TT_47379200,
+  _72695099, _47133021, _47222882), by TraceLink order number then customer PO, booking within -21..+14
+  days of the start date. Cancelled bookings are ignored; the status is the furthest event (Delivered >
+  In transit > Booked; 'K' info events and 'No status available' = booked). "Booked · collection <date>"
+  uses Dachser's shipmentDate = the planned collection date (the time a booking was created is not
+  available from Dachser). Red "Book now" = not booked and start within 2 working days
+  (BOOK_AHEAD_WORKDAYS per customer); none for EX_WORKS customers (Real Food Distributors) or orders
+  Dachser's Hannover warehouse holds (Dachser books those). Repository variable BOOKING_WARNING = 0
+  switches the warning off.
 - **Dashboard 4**: open orders, start date today or later, top 20 by current e-conomic value, plus their
   share of all open order value. Delivery = current TraceLink delivery date. Transport = Dachser Track &
   Trace (shipmenthistory): looked up by TraceLink order number (Glostrup bookings) and customer order

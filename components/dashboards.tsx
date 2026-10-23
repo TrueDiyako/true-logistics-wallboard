@@ -298,6 +298,7 @@ const statusBoard: PanelFn = ({ live }) => {
 const TRANSPORT: Record<string, [string, string]> = {
   "delivered": ["Delivered", "good"], "in transit": ["In transit", "good"], "booked": ["Booked", "good"],
   "not booked": ["Not booked", ""], "unknown": ["Unknown", ""],
+  "ex works": ["Ex works", ""], "hannover": ["Hannover · Dachser books", ""],
 };
 
 const biggest: PanelFn = ({ live }) => {
@@ -326,7 +327,8 @@ const biggest: PanelFn = ({ live }) => {
                   <td>{r.delivery ? day(r.delivery) : "–"}</td>
                   <td className="num">{dkk(r.revenue_dkk)}</td><td className="num">{pct(r.pick_rate_pct)}</td>
                   <td>{r.status}</td>
-                  <td className={r.book_now ? "bad" : cls}>{r.book_now ? "Book now" : label}</td>
+                  <td className={r.book_now ? "bad" : cls}>{r.book_now ? "Book now"
+                    : r.transport === "booked" && r.collection ? `Booked · collection ${fmtDayMonth(r.collection)}` : label}</td>
                 </tr>
               );
             })}

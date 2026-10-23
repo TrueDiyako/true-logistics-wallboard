@@ -74,7 +74,7 @@ def test_biggest_orders():
     assert [r["order"] for r in rows] == ["1022811", "1022422", "1022357", "1022319", "1022352"]
     r = {x["order"]: x for x in rows}
     assert r["1022811"]["pick_rate_pct"] == 0.0 and r["1022422"]["pick_rate_pct"] == 75.0
-    assert r["1022422"]["transport"] == "booked" and r["1022811"]["transport"] == "not booked"
+    assert r["1022422"]["transport"] == "ex works" and r["1022811"]["transport"] == "not booked"   # Real Food: ex works
     assert r["1022357"]["pick_rate_pct"] is None and r["1022352"]["status"] == live.NOT_READY
     assert r["1022811"]["po"] == "PO-TRC-20260921-NEOW" and r["1022811"]["delivery"] == "2026-10-14"
 
@@ -154,20 +154,48 @@ def test_dachser_states_keys_and_matching():
         live.urllib.request.urlopen = orig
     assert live.Dachser([]).booked("1") == "unknown" and live.Dachser([]).status == "no key"
 
+def test_four_accounts_customer_id_and_timeouts():
+    import urllib.parse as up
+    calls = []
+    def fake(req, timeout=30):
+        q = up.parse_qs(up.urlparse(req.full_url).query)
+        calls.append((req.headers.get("X-api-key"), q["tracking-number"][0], q.get("customer-id", [""])[0]))
+        if q["tracking-number"][0] == "1022811" and q.get("customer-id") == ["47133021"]:
+            return _Resp({"shipments": [SHIP_DK]})
+        if q["tracking-number"][0] == "SLOW":
+            raise TimeoutError("The read operation timed out")
+        raise urllib.error.HTTPError(req.full_url, 422, "x", {}, io.BytesIO(b"{}"))
+    orig = live.urllib.request.urlopen; live.urllib.request.urlopen = fake; live.time.sleep = lambda s: None
+    try:
+        dc = live.Dachser([("47379200", "KH"), ("72695099", "K1"), ("47133021", "K2"), ("47222882", "K3")])
+        assert dc.booked("1022811", "", dt.date(2026, 10, 15)) == "booked"
+        assert dc.found_by["1022811"] == "47133021"
+        assert [c[2] for c in calls] == ["47379200", "72695099", "47133021"]          # stops at the account that has it
+        assert dc.booked("1", "SLOW", None) == "unknown" and dc.no_answer == 1          # timeout: unknown, no crash
+        assert dc.booked("1022811", "", dt.date(2026, 10, 15)) == "booked"               # carries on afterwards
+    finally:
+        live.urllib.request.urlopen = orig
+    env = {"DACHSER_TT_47379200": "KH", "DACHSER_TT_47222882": "K3", "DACHSER_API_KEY": "KH", "DACHSER_API_KEY_DK": "OLD"}
+    orig_env = dict(live.os.environ); live.os.environ.update(env)
+    try:
+        assert live._dachser_keys() == [("47379200", "KH"), ("47222882", "K3"), ("", "OLD")]   # no duplicate key
+    finally:
+        live.os.environ.clear(); live.os.environ.update(orig_env)
+
 def test_booking_warning_and_workdays():
     assert live.workdays_until(dt.date(2026, 10, 2), dt.date(2026, 10, 6)) == 2   # Fri -> Tue = Mon, Tue
     open_o = [o for o in ORDERS if o["customer_id"] not in common.INTERNAL_CUSTOMERS]
     tl = FakeTL()
-    live.BOOKING_WARNING = True
+    was, live.BOOKING_WARNING = live.BOOKING_WARNING, True
     try:
         rows = live.build_biggest(open_o, NAMES, dict(VALUES), lambda i: tl.module("genobj", i), FakeDachser(), TODAY)
     finally:
-        live.BOOKING_WARNING = False
+        live.BOOKING_WARNING = was
     r = {x["order"]: x for x in rows}
     assert r["1022352"]["book_now"] and r["1022319"]["book_now"]            # Fri 2 Oct / Mon 5 Oct, not booked
     assert not r["1022811"]["book_now"] and not r["1022422"]["book_now"]    # 12 Oct is far; 1022422 booked
     s = live.biggest_summary(open_o, dict(VALUES), rows, TODAY)
-    assert s["top_value_dkk"] == round(sum(VALUES.values())) and s["top_share_pct"] == 100.0 and s["booked"] == 1
+    assert s["top_value_dkk"] == round(sum(VALUES.values())) and s["top_share_pct"] == 100.0 and s["booked"] == 0
 
 def test_live_main_end_to_end():
     store = {}
@@ -325,6 +353,77 @@ def test_dachser_check_runs_hourly_and_reuses_in_between():
         assert built == [1, 1]
     finally:
         common.redis_get, dachser_notes.build = o_get, o_build
+
+# real Dachser shipments (Glostrup account 47222882, 21-23 Oct 2026)
+EB64_CANCELLED = {"id": "4969442874", "shipmentDate": "2026-10-07",
+                  "status": [{"statusDate": "2026-10-23", "event": {"code": "K", "description": "Information - Order Cancelled"}}]}
+EB64_REBOOKED = {"id": "4969894494", "shipmentDate": "2026-10-22",
+                 "status": [{"statusDate": "2026-10-22T14:52:00", "event": {"code": "A", "description": "Outbound"}}]}
+BOOKED_ONLY = {"id": "4969683956", "shipmentDate": "2026-10-21", "status": [{"statusDate": "2026-10-21", "event": {"code": "0"}}]}
+CUSTOMS_INFO = {"id": "4969925066", "shipmentDate": "2026-10-22",
+                "status": [{"statusDate": "2026-10-23", "event": {"code": "K", "description": "Information - Customs clearance handling"}}]}
+DELIVERED = {"id": "4969878031", "shipmentDate": "2026-10-21", "status": [
+    {"statusDate": "2026-10-21T21:35:00", "event": {"code": "A"}}, {"statusDate": "2026-10-22T02:52:00", "event": {"code": "E"}},
+    {"statusDate": "2026-10-22T05:40:00", "event": {"code": "R"}}, {"statusDate": "2026-10-22T09:19:00", "event": {"code": "Z"}}]}
+
+def test_state_from_all_events_and_cancellations():
+    D = live.Dachser
+    assert D.state_of(BOOKED_ONLY) == "booked" and D.state_of(CUSTOMS_INFO) == "booked"     # info event is not movement
+    assert D.state_of(EB64_REBOOKED) == "in transit" and D.state_of(DELIVERED) == "delivered"
+    assert D.cancelled(EB64_CANCELLED) and not D.cancelled(CUSTOMS_INFO)
+    import urllib.parse as up
+    def fake(req, timeout=30):
+        ref = up.parse_qs(up.urlparse(req.full_url).query)["tracking-number"][0]
+        if ref == "1022352": return _Resp({"shipments": [EB64_CANCELLED, EB64_REBOOKED]})
+        if ref == "1023065": return _Resp({"shipments": [BOOKED_ONLY]})
+        if ref == "OLDONLY": return _Resp({"shipments": [EB64_CANCELLED]})
+        raise urllib.error.HTTPError(req.full_url, 422, "x", {}, io.BytesIO(b"{}"))
+    orig = live.urllib.request.urlopen; live.urllib.request.urlopen = fake; live.time.sleep = lambda s: None
+    try:
+        dc = live.Dachser([("47222882", "K")])
+        assert dc.booked("1022352", "EB64 - Truck 54", dt.date(2026, 10, 22)) == "in transit"   # cancelled one ignored
+        assert dc.collection["1022352"] == "2026-10-22"
+        assert dc.booked("1023065", "", dt.date(2026, 10, 21)) == "booked" and dc.collection["1023065"] == "2026-10-21"
+        assert dc.booked("9", "OLDONLY", dt.date(2026, 10, 8)) == "not booked"                  # only a cancelled booking
+    finally:
+        live.urllib.request.urlopen = orig
+
+def test_book_now_ex_works_and_hannover():
+    import dachser_notes
+    o = lambda num, cust, name, start: {"order_id": num, "number": num, "customer_id": cust, "name": name,
+                                         "start_date": start + " 07:00:00", "deadline_date": start + " 15:00:00", "state": "Pakning"}
+    orders = [o("A", "1308", "TR-41", "2026-10-06"),                   # Real Food: ex works
+              o("B", "1484", "IOR8600", "2026-10-06"),                 # Hannover warehouse order exists
+              o("C", "1692", "EB70 - Truck 60", "2026-10-06"),         # Glostrup, not booked, due -> Book now
+              o("D", "1692", "EB71 - Truck 61", "2026-10-20"),         # not booked but far ahead
+              o("E", "9999", "LONGHAUL", "2026-10-09")]               # customer with a 5-day rule
+    values = {"A": 5e5, "B": 4e5, "C": 3e5, "D": 2e5, "E": 1e5}
+    class NotBooked:
+        status = "ok"; collection = {}; found_by = {}
+        def booked(self, n, po="", start=None): return "not booked"
+    orig_h, orig_ahead, was = live.hannover_order, dict(live.BOOK_AHEAD_WORKDAYS), live.BOOKING_WARNING
+    live.BOOKING_WARNING = True
+    live.hannover_order = lambda po: po == "IOR8600"
+    live.BOOK_AHEAD_WORKDAYS["9999"] = 5
+    try:
+        rows = {r["order"]: r for r in live.build_biggest(orders, {}, values, lambda i: [], NotBooked(), dt.date(2026, 10, 2))}
+    finally:
+        live.hannover_order = orig_h; live.BOOK_AHEAD_WORKDAYS.clear(); live.BOOK_AHEAD_WORKDAYS.update(orig_ahead)
+        live.BOOKING_WARNING = was
+    assert rows["A"]["transport"] == "ex works" and not rows["A"]["book_now"]
+    assert rows["B"]["transport"] == "hannover" and not rows["B"]["book_now"]
+    assert rows["C"]["book_now"] and not rows["D"]["book_now"]
+    assert rows["E"]["book_now"]                                          # 5 working days ahead for that customer
+
+def test_hannover_order_uses_the_warehouse_status():
+    import dachser_notes
+    orig = dachser_notes.dachser, dachser_notes.DACHSER_STATUS_KEY
+    dachser_notes.DACHSER_STATUS_KEY = "S"
+    dachser_notes.dachser = lambda path, ref: (200, {"deliveryOrders": [{"id": "414-1"}]}) if ref == "IOR8600" else (422, {})
+    try:
+        assert live.hannover_order("IOR8600") and not live.hannover_order("EB70 - Truck 60") and not live.hannover_order("")
+    finally:
+        dachser_notes.dachser, dachser_notes.DACHSER_STATUS_KEY = orig
 
 def test_cph_now_is_naive_local():
     n = common.cph_now()

@@ -28,19 +28,38 @@ import skill_usage
 import weclapp_check
 import response_time_extract as rx
 
-# One Track & Trace key per Dachser login: Hannover (Dachser-run warehouse) and Denmark
-# (Glostrup, "True, Formervangen 13"). Missing keys are simply skipped.
-DACHSER_KEYS = [k for k in (os.environ.get("DACHSER_API_KEY", ""), os.environ.get("DACHSER_API_KEY_DK", ""),
-                            os.environ.get("DACHSER_API_KEY_DK2", ""), os.environ.get("DACHSER_API_KEY_DK3", ""))
-                if k and k.strip() and k.strip().upper() != "PENDING"]
+# Track & Trace: one key per Dachser customer number (login). Secrets DACHSER_TT_<customer no.>;
+# the older DACHSER_API_KEY / _DK / _DK2 / _DK3 secrets still work (customer number unknown).
+DACHSER_ACCOUNTS = {"47379200": "Hannover (Dachser-run warehouse)", "72695099": "Denmark - TRUE. APS, Glostrup",
+                    "47133021": "Denmark", "47222882": "Denmark"}
+
+
+def _dachser_keys():
+    out, seen = [], set()
+    for cust in DACHSER_ACCOUNTS:
+        k = os.environ.get(f"DACHSER_TT_{cust}", "").strip()
+        if k and k.upper() != "PENDING" and k not in seen:
+            out.append((cust, k)); seen.add(k)
+    for var in ("DACHSER_API_KEY", "DACHSER_API_KEY_DK", "DACHSER_API_KEY_DK2", "DACHSER_API_KEY_DK3"):
+        k = os.environ.get(var, "").strip()
+        if k and k.upper() != "PENDING" and k not in seen:
+            out.append(("", k)); seen.add(k)
+    return out
+
+
+DACHSER_KEYS = _dachser_keys()
 DACHSER_BASE = "https://api-gateway.dachser.com"
 # Track & Trace comes as two subscriptions with the same request and answer (history first)
 DACHSER_ENDPOINTS = ["shipmenthistory", "shipmentstatus"]
 DACHSER_MATCH_WINDOW = (-21, 14)   # shipment date vs order start date, so a generic PO can't match
 # Red "book it" warning for Glostrup orders not booked 2 working days before start.
 # Off until every Danish Dachser account is visible to the keys (otherwise false alarms).
-BOOKING_WARNING = os.environ.get("BOOKING_WARNING", "") == "1"
-BOOK_BY_WORKDAYS = 2
+BOOKING_WARNING = os.environ.get("BOOKING_WARNING", "1") != "0"     # on; "0" switches it off
+BOOK_BY_WORKDAYS = 2          # general rule: booked at least this many working days before start
+# Customers that collect themselves: no booking by us, no warning ({customer number: name})
+EX_WORKS = {"1308": "Real Food Distributors Pty Ltd."}
+# Customers that need booking earlier than the general rule ({customer number: working days})
+BOOK_AHEAD_WORKDAYS = {}
 
 BOARD_AHEAD_DAYS = 14      # dashboard 3: start date within the next 14 days
 BOARD_OVERDUE_DAYS = 60    # ...and not older than this (stale orders ignored)
@@ -85,20 +104,34 @@ def workdays_until(today, day):
     return n
 
 
+class TransportNoAnswer(Exception):
+    """Dachser Track & Trace didn't answer after the retries."""
+
+
 class Dachser:
     """Booking state of an order in Dachser Track & Trace. Glostrup bookings carry the
     TraceLink order number, Hannover bookings the customer order (PO) - both are tried,
     with every key. States: not booked / booked / in transit / delivered / unknown."""
 
     def __init__(self, keys=None):
-        self.keys = [{"key": k, "endpoints": list(DACHSER_ENDPOINTS), "ok": True}
-                     for k in (DACHSER_KEYS if keys is None else keys)]
+        # keys: [(customer number, key)]; a bare key string = customer number unknown
+        keys = DACHSER_KEYS if keys is None else keys
+        self.keys = [{"customer": k[0], "key": k[1]} if isinstance(k, tuple) else {"customer": "", "key": k}
+                     for k in keys]
+        for k in self.keys:
+            k.update(endpoints=list(DACHSER_ENDPOINTS), ok=True)
         self.status = "ok" if self.keys else "no key"
+        self.found_by = {}          # order number -> customer number of the account that found it
+        self.collection = {}        # order number -> planned collection date (Dachser shipmentDate)
+        self.no_answer = 0
 
     def _get(self, k, ref):
+        params = {"tracking-number": ref}
+        if k["customer"]:
+            params["customer-id"] = k["customer"]
+        tries = 0
         while k["endpoints"]:
-            q = urllib.parse.urlencode({"tracking-number": ref})
-            req = urllib.request.Request(f"{DACHSER_BASE}/rest/v2/{k['endpoints'][0]}?{q}",
+            req = urllib.request.Request(f"{DACHSER_BASE}/rest/v2/{k['endpoints'][0]}?{urllib.parse.urlencode(params)}",
                                          headers={"X-API-Key": k["key"], "Accept": "application/json"})
             try:
                 with urllib.request.urlopen(req, timeout=30) as r:
@@ -111,17 +144,41 @@ class Dachser:
                     continue
                 if e.code in (400, 404, 422):
                     return []
-                raise
+                if e.code < 500 or tries >= 2:
+                    raise TransportNoAnswer(f"HTTP {e.code}")
+            except (TimeoutError, OSError, ValueError) as e:     # timeout / connection reset / cut-off
+                if tries >= 2:
+                    raise TransportNoAnswer(f"{type(e).__name__}: {e}")
+            tries += 1
+            time.sleep(2 * tries)
         k["ok"] = False
         return []
 
     @staticmethod
+    def cancelled(ship):
+        return any((e.get("event") or {}).get("code") == "K"
+                   and "cancel" in str((e.get("event") or {}).get("description", "")).lower()
+                   for e in ship.get("status") or [])
+
+    @staticmethod
     def state_of(ship):
-        events = sorted(ship.get("status") or [], key=lambda s: s.get("statusSequence") or 99)
-        code = ((events[0].get("event") or {}).get("code") if events else "") or "0"
-        return "delivered" if code == "Z" else ("booked" if code == "0" else "in transit")
+        """From all events, the furthest one: delivered > in transit > booked. 'K' events are
+        information only (customs, cancellation) and '0' means no scan yet - both = booked."""
+        codes = {str((e.get("event") or {}).get("code") or "0") for e in ship.get("status") or []}
+        if "Z" in codes:
+            return "delivered"
+        if codes - {"0", "K", ""}:
+            return "in transit"
+        return "booked"
 
     def booked(self, order_number, po="", start=None):
+        try:
+            return self._booked(order_number, po, start)
+        except TransportNoAnswer:
+            self.no_answer += 1                  # this order shows "unknown"; the rest carries on
+            return "unknown"
+
+    def _booked(self, order_number, po="", start=None):
         live = [k for k in self.keys if k["ok"]]
         if not live:
             self.status = "not subscribed" if self.keys else "no key"
@@ -134,13 +191,30 @@ class Dachser:
                 if start:
                     ships = [s for s in ships if d(s.get("shipmentDate")) and DACHSER_MATCH_WINDOW[0]
                              <= (d(s["shipmentDate"]) - start).days <= DACHSER_MATCH_WINDOW[1]]
+                ships = [s for s in ships if not self.cancelled(s)]   # rebooked orders: the cancelled one doesn't count
                 if ships:
                     order = ["delivered", "in transit", "booked"]
-                    return min((self.state_of(s) for s in ships), key=order.index)
+                    best = min(ships, key=lambda s: order.index(self.state_of(s)))
+                    self.found_by[str(order_number)] = k["customer"]
+                    self.collection[str(order_number)] = str(best.get("shipmentDate") or "")[:10]
+                    return self.state_of(best)
         if not any(k["ok"] for k in self.keys):
             self.status = "not subscribed"
             return "unknown"
         return "not booked"
+
+
+def hannover_order(po):
+    """True when Dachser's Hannover warehouse has a delivery order for this PO - Dachser books
+    those shipments itself, so no 'Book now'. Uses the warehouse status key (DACHSER_STATUS_KEY)."""
+    import dachser_notes
+    if not po or not dachser_notes.DACHSER_STATUS_KEY:
+        return False
+    try:
+        code, body = dachser_notes.dachser("/rest/v2/deliveryorderstatus", po)
+    except dachser_notes.NoAnswer:
+        return False
+    return code == 200 and bool(body.get("deliveryOrders"))
 
 
 def econ_collection(econ, path):
@@ -196,15 +270,20 @@ def build_biggest(open_orders, names, values, genobj_of, dachser, today):
     out = []
     for v, o, start in rows[:BIGGEST_ROWS]:
         rate, _ = pick_rate(genobj_of(o["order_id"]))
-        transport = dachser.booked(o["number"], o.get("name"), start)
+        cust = str(o["customer_id"])
+        transport = "ex works" if cust in EX_WORKS else dachser.booked(o["number"], o.get("name"), start)
+        due = workdays_until(today, start) <= BOOK_AHEAD_WORKDAYS.get(cust, BOOK_BY_WORKDAYS)
+        if transport == "not booked" and BOOKING_WARNING and due and hannover_order((o.get("name") or "").strip()):
+            transport = "hannover"                                   # Dachser books it on shipping day
         out.append({"customer": names.get(str(o["customer_id"]), ""), "order": o["number"],
                     "po": (o.get("name") or "").strip(),
                     "start": start.isoformat(),
                     "delivery": d(o.get("deadline_date")).isoformat() if d(o.get("deadline_date")) else None,
                     "revenue_dkk": round(v),
                     "pick_rate_pct": rate, "transport": transport,
-                    "book_now": (BOOKING_WARNING and transport == "not booked"
-                                 and workdays_until(today, start) <= BOOK_BY_WORKDAYS),
+                    "transport_account": getattr(dachser, "found_by", {}).get(str(o["number"]), ""),
+                    "collection": getattr(dachser, "collection", {}).get(str(o["number"]), ""),
+                    "book_now": BOOKING_WARNING and transport == "not booked" and due,
                     "status": column_of(o["state"]) or o["state"]})
     return out
 
@@ -334,6 +413,8 @@ def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=N
                          ["status_board", "biggest", "biggest_summary", "due_not_ready", "emails_waiting", "production",
                           "weclapp", "ai_adoption", "dachser_pick"])
     payload["dachser_tracking"] = dachser.status
+    payload["dachser_accounts"] = [k["customer"] or "unnamed key" for k in getattr(dachser, "keys", []) if k.get("ok")]
+    payload["dachser_no_answer"] = getattr(dachser, "no_answer", 0)
     payload["booking_warning"] = BOOKING_WARNING
     common.redis_set("lk:live", payload)
     return payload, h.publish({"dachser_tracking": dachser.status})
