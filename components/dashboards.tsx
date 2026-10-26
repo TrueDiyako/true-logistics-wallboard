@@ -174,29 +174,20 @@ function CloseoutList({ co, onClose }: { co: any; onClose: () => void }) {
 function CreditPanel({ c }: { c: any }) {
   const [open, setOpen] = useState(false);
   const w = c.weekly || [];
-  const by = c.by_owner || null;
   const co = c.closeout;
-  const items: any[] = [{ label: `${c.headline.credits} of ${c.headline.invoices} invoices credited, last 13 weeks`,
+  const items: any[] = [{ label: `${c.headline.credits} of ${c.headline.invoices} invoices, 13 weeks`,
                           value: pct(c.headline.credit_pct), color: C.credit }];
-  if (co)
-    items.push({ label: co.credit_notes
-                   ? `${co.without_closeout} of ${co.credit_notes} credit notes since week 41 were on orders not closed out with the order-closeout skill`
-                   : "no credit notes since week 41",
-                 value: co.credit_notes ? pct(co.pct_without_closeout) : "–", color: C.noReply,
-                 onClick: co.credit_notes ? () => setOpen(true) : undefined });
-  else if (by || c.closeout_error)
-    items.push({ label: c.closeout_error ? `order-closeout share failed – ${c.closeout_error}`
-                                         : "order-closeout share: not calculated yet (next nightly run)",
+  if (co && co.credit_notes)
+    items.push({ label: "Percentage of credit notes not using order-closeout skill",
+                 value: pct(co.pct_without_closeout), color: C.noReply, onClick: () => setOpen(true) });
+  else if (c.closeout_error)
+    items.push({ label: "Percentage of credit notes not using order-closeout skill (not available)",
                  value: "–", color: C.noReply });
-  const owners = by ? Object.keys(OWNER_COLORS).filter((o) => by[o] && by[o].some((x: any) => x.pct)) : [];
-  const series = by
-    ? owners.map((o) => ({ name: o, values: by[o].map((x: any) => x.pct), color: OWNER_COLORS[o], width: 4 }))
-    : [{ name: "Credited", values: w.map((x: any) => x.pct), color: C.credit, width: 7 }];
   return (
-    <Panel title="Credit notes" note={by ? "% of invoices credited per week · split per owner · lines add up to the week's total" : "% of invoices credited"}>
+    <Panel title="Credit notes" note="% of invoices credited">
       <Headlines items={items} />
-      <LineChart labels={w.map((x: any) => x.week)} series={series} fitPct={!!by} />
-      {by && <Legend items={owners.map((o) => ({ label: o, color: OWNER_COLORS[o] }))} />}
+      <LineChart labels={w.map((x: any) => x.week)}
+                 series={[{ name: "Credited", values: w.map((x: any) => x.pct), color: C.credit, width: 7 }]} />
       {open && co && <CloseoutList co={co} onClose={() => setOpen(false)} />}
     </Panel>
   );
