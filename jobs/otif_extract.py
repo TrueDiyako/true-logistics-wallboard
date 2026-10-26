@@ -89,6 +89,7 @@ for _k in ('TRACELINK_TOKEN',):
 
 import csv
 import datetime as dt
+import http.client
 import json
 import re
 import os
@@ -123,6 +124,13 @@ def _post(path, body=None, retries=4):
                 time.sleep(2 ** attempt)
                 continue
             raise RuntimeError(f"Network error on {path}: {e.reason}") from None
+        except (TimeoutError, OSError, ValueError, http.client.HTTPException) as e:
+            # slow or cut-off answer while reading: ask again
+            if attempt < retries - 1:
+                time.sleep(3 * (attempt + 1))
+                continue
+            raise RuntimeError(f"TraceLink did not answer on {path} after {retries} tries: "
+                               f"{type(e).__name__}: {e}") from None
 
 
 class TraceLink:

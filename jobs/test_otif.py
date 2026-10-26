@@ -298,6 +298,32 @@ def test_http_layer_headers_and_paging_guard():
     assert seen["body"] == {"order": {"limit": 1000, "filter": {"x": "=1"}}}
     srv.shutdown()
 
+
+def test_read_timeout_is_retried():
+    # real (26 Oct 2026): "The read operation timed out" failed the nightly credit section
+    class R:
+        def __init__(s, b): s.b = b
+        def __enter__(s): return s
+        def __exit__(s, *a): pass
+        def read(s): return s.b
+    seq = [TimeoutError("The read operation timed out"), R(b'{"ok": 1}')]
+    def fake(req, timeout=60):
+        x = seq.pop(0)
+        if isinstance(x, Exception): raise x
+        return x
+    orig, sleep = ox.urllib.request.urlopen, ox.time.sleep
+    ox.urllib.request.urlopen, ox.time.sleep = fake, (lambda s: None)
+    try:
+        assert (lambda: ox._post('/x'))() == {"ok": 1}
+        def always(req, timeout=60): raise TimeoutError("The read operation timed out")
+        ox.urllib.request.urlopen = always
+        try:
+            (lambda: ox._post('/x'))(); assert False
+        except RuntimeError as e:
+            assert "did not answer" in str(e)
+    finally:
+        ox.urllib.request.urlopen, ox.time.sleep = orig, sleep
+
 if __name__ == "__main__":
     import sys
     fails = 0

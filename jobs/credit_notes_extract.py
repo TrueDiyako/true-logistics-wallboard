@@ -54,6 +54,7 @@ for _k in ('APP_SECRET_TOKEN', 'AGREEMENT_GRANT_TOKEN'):
 
 import csv
 import datetime as dt
+import http.client
 import json
 import os
 import re
@@ -82,6 +83,13 @@ class Economic:
                     continue
                 raise RuntimeError(f"e-conomic HTTP {e.code}: "
                                    f"{e.read().decode(errors='replace')[:300]}") from None
+            except (TimeoutError, OSError, ValueError, http.client.HTTPException) as e:
+                # slow or cut-off answer (seen 26 Oct: "The read operation timed out"): ask again
+                if attempt < retries - 1:
+                    time.sleep(3 * (attempt + 1))
+                    continue
+                raise RuntimeError(f"e-conomic did not answer after {retries} tries: "
+                                   f"{type(e).__name__}: {e}") from None
 
     def booked_invoices(self, d_from, d_to):
         q = urllib.parse.urlencode({"filter": f"date$gte:{d_from}$and:date$lte:{d_to}",
