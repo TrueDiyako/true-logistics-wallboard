@@ -541,6 +541,19 @@ def test_biggest_next_two_weeks_and_ex_works():
     assert [r["order"] for r in rows] == ["1022848", "1022966", "1023200"]
     assert rows[0]["transport"] == "ex works" and not rows[0]["book_now"]
 
+def test_biggest_only_the_top_15():
+    O = lambda n: {"order_id": str(n), "number": str(n), "customer_id": "145", "name": f"PO{n}",
+                   "start_date": "2026-10-30 07:00:00", "deadline_date": "2026-10-30 15:00:00", "state": "Pakning"}
+    orders = [O(1023000 + i) for i in range(40)]                      # real case 26 Oct: 40 orders in 2 weeks
+    values = {str(1023000 + i): 1000.0 * (40 - i) for i in range(40)}
+    class D:
+        status = "ok"; collection = {}; found_by = {}
+        def booked(self, n, po="", start=None): return "booked" if n == "1023000" else "not booked"
+    rows = live.build_biggest(orders, {}, values, lambda i: [], D(), dt.date(2026, 10, 26))
+    assert len(rows) == 15 and rows[0]["order"] == "1023000" and rows[-1]["order"] == "1023014"
+    s = live.biggest_summary(orders, values, rows, dt.date(2026, 10, 26))
+    assert s["top_orders"] == 15 and s["booked"] == 1 and s["open_orders"] == 40
+
 def test_cph_now_is_naive_local():
     n = common.cph_now()
     assert n.tzinfo is None
