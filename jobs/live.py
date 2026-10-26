@@ -57,7 +57,7 @@ DACHSER_MATCH_WINDOW = (-21, 14)   # shipment date vs order start date, so a gen
 BOOKING_WARNING = os.environ.get("BOOKING_WARNING", "1") != "0"     # on; "0" switches it off
 BOOK_BY_WORKDAYS = 2          # general rule: booked at least this many working days before start
 # Customers that collect themselves: no booking by us, no warning ({customer number: name})
-EX_WORKS = {"1308": "Real Food Distributors Pty Ltd."}
+EX_WORKS = {"1308": "Real Food Distributors Pty Ltd.", "1332": "A1 d.o.o."}
 # Customers that need booking earlier than the general rule ({customer number: working days})
 BOOK_AHEAD_WORKDAYS = {}
 
@@ -65,7 +65,8 @@ BOARD_AHEAD_DAYS = 14      # dashboard 3: start date within the next 14 days
 BOARD_OVERDUE_DAYS = 60    # ...and not older than this (stale orders ignored)
 SHIPPED_BACK_DAYS = 61     # "shipped, not closed": start date within the past two months
 ACTION_DAYS = 3            # dashboard 2: due within 3 days
-BIGGEST_ROWS = 20
+BIGGEST_ROWS = 40              # sent to the page, which shows as many as fit on the screen
+BIGGEST_WINDOW_DAYS = 14       # biggest orders starting within the next 2 weeks
 EMAIL_LOOKBACK_DAYS = 14   # older unanswered mails are history, not today's to-do
 EMAIL_WAIT_BH = 8          # more than 1 business day
 DACHSER_EVERY_MIN = int(os.environ.get("DACHSER_EVERY_MIN", "30") or 30)   # Dachser delivery-note check
@@ -260,7 +261,7 @@ def build_biggest(open_orders, names, values, genobj_of, dachser, today):
     rows = []
     for o in open_orders:
         start = d(o.get("start_date"))
-        if start is None or start < today:
+        if start is None or start < today or start > today + dt.timedelta(days=BIGGEST_WINDOW_DAYS):
             continue
         v = values.get(str(o["number"]))
         if v is None:

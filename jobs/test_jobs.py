@@ -71,11 +71,12 @@ def test_biggest_orders():
     tl = FakeTL()
     rows = live.build_biggest(open_o, NAMES, {k: v for k, v in VALUES.items()}, lambda i: tl.module("genobj", i),
                               FakeDachser(), TODAY)
-    assert [r["order"] for r in rows] == ["1022811", "1022422", "1022357", "1022319", "1022352"]
+    # 1022357 starts 23 Oct, 3 weeks after TODAY (2 Oct): outside the 2-week window
+    assert [r["order"] for r in rows] == ["1022811", "1022422", "1022319", "1022352"]
     r = {x["order"]: x for x in rows}
     assert r["1022811"]["pick_rate_pct"] == 0.0 and r["1022422"]["pick_rate_pct"] == 75.0
     assert r["1022422"]["transport"] == "ex works" and r["1022811"]["transport"] == "not booked"   # Real Food: ex works
-    assert r["1022357"]["pick_rate_pct"] is None and r["1022352"]["status"] == live.NOT_READY
+    assert "1022357" not in r and r["1022352"]["status"] == live.NOT_READY
     assert r["1022811"]["po"] == "PO-TRC-20260921-NEOW" and r["1022811"]["delivery"] == "2026-10-14"
 
 def test_due_not_ready():
@@ -198,7 +199,10 @@ def test_booking_warning_and_workdays():
     assert r["1022352"]["book_now"] and r["1022319"]["book_now"]            # Fri 2 Oct / Mon 5 Oct, not booked
     assert not r["1022811"]["book_now"] and not r["1022422"]["book_now"]    # 12 Oct is far; 1022422 booked
     s = live.biggest_summary(open_o, dict(VALUES), rows, TODAY)
-    assert s["top_value_dkk"] == round(sum(VALUES.values())) and s["top_share_pct"] == 100.0 and s["booked"] == 0
+    in_window = sum(v for k, v in VALUES.items() if k != "1022357")
+    assert s["top_value_dkk"] == round(in_window) and s["top_orders"] == 4 and s["booked"] == 0
+    assert s["open_value_dkk"] == round(sum(VALUES.values()))            # all open orders, incl. later ones
+    assert s["top_share_pct"] == round(100 * in_window / sum(VALUES.values()), 1)
 
 def test_live_main_end_to_end():
     store = {}
@@ -398,7 +402,7 @@ def test_book_now_ex_works_and_hannover():
     orders = [o("A", "1308", "TR-41", "2026-10-06"),                   # Real Food: ex works
               o("B", "1484", "IOR8600", "2026-10-06"),                 # Hannover warehouse order exists
               o("C", "1692", "EB70 - Truck 60", "2026-10-06"),         # Glostrup, not booked, due -> Book now
-              o("D", "1692", "EB71 - Truck 61", "2026-10-20"),         # not booked but far ahead
+              o("D", "1692", "EB71 - Truck 61", "2026-10-14"),         # not booked, 8 working days ahead
               o("E", "9999", "LONGHAUL", "2026-10-09")]               # customer with a 5-day rule
     values = {"A": 5e5, "B": 4e5, "C": 3e5, "D": 2e5, "E": 1e5}
     class NotBooked:
@@ -520,6 +524,22 @@ def test_po_lookup_asks_only_for_the_needed_pos():
     assert d[1] == [1022422] and d[2] == [1022742] and d[3] == [] and d[5] == [1022999]
     assert s["credit_notes"] == 5 and s["without_closeout"] == 4 and s["pct_without_closeout"] == 80.0
     assert s["no_order_found"] == 1
+
+def test_biggest_next_two_weeks_and_ex_works():
+    O = lambda num, cust, start: {"order_id": num, "number": num, "customer_id": cust, "name": "PO" + num,
+                                  "start_date": start + " 07:00:00", "deadline_date": start + " 15:00:00", "state": "Pakning"}
+    orders = [O("1022848", "1332", "2026-10-27"),        # A1 d.o.o.: ex works
+              O("1023123", "1308", "2026-11-18"),        # Real Food, starts in 23 days: outside the 2 weeks
+              O("1022966", "145", "2026-11-02"),         # inside
+              O("1023200", "145", "2026-11-09"),         # 14 days ahead: still inside
+              O("1023201", "145", "2026-10-25")]         # started yesterday: out
+    values = {"1022848": 610e3, "1023123": 615e3, "1022966": 608e3, "1023200": 100e3, "1023201": 900e3}
+    class D:
+        status = "ok"; collection = {}; found_by = {}
+        def booked(self, n, po="", start=None): return "not booked"
+    rows = live.build_biggest(orders, {}, values, lambda i: [], D(), dt.date(2026, 10, 26))
+    assert [r["order"] for r in rows] == ["1022848", "1022966", "1023200"]
+    assert rows[0]["transport"] == "ex works" and not rows[0]["book_now"]
 
 def test_cph_now_is_naive_local():
     n = common.cph_now()

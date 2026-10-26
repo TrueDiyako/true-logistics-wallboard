@@ -345,6 +345,40 @@ const TRANSPORT: Record<string, [string, string]> = {
   "ex works": ["Ex works", ""], "hannover": ["Hannover · Dachser books", ""],
 };
 
+// Table that shows as many rows as fit; the rest is counted underneath. Same approach as the
+// production days: after each render, drop a row while it overflows; start again on new data/size.
+function FitTable({ rows, head, row, more }: { rows: any[]; head: React.ReactNode;
+                                              row: (r: any, i: number) => React.ReactNode; more: (n: number) => string }) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  const [shown, setShown] = React.useState(rows.length);
+  const [size, setSize] = React.useState(0);
+  const key = rows.map((r: any) => r.order).join(",") + "|" + size;
+  const lastKey = React.useRef(key);
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let last = el.clientHeight;
+    const ro = new ResizeObserver(() => { if (el.clientHeight !== last) { last = el.clientHeight; setSize((x) => x + 1); } });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  React.useLayoutEffect(() => {
+    if (lastKey.current !== key) { lastKey.current = key; setShown(rows.length); return; }
+    const el = ref.current;
+    if (el && el.scrollHeight > el.clientHeight + 1 && shown > 1) setShown(shown - 1);
+  });
+  const n = Math.min(shown, rows.length);
+  return (
+    <div className="fitwrap" ref={ref}>
+      <table className="table">
+        <thead>{head}</thead>
+        <tbody>{rows.slice(0, n).map(row)}</tbody>
+      </table>
+      {rows.length > n && <div className="more2 fitmore">{more(rows.length - n)}</div>}
+    </div>
+  );
+}
+
 const biggest: PanelFn = ({ live }) => {
   const rows = live?.biggest;
   if (!rows) return <Panel title="Biggest open orders"><Missing /></Panel>;
@@ -354,30 +388,27 @@ const biggest: PanelFn = ({ live }) => {
   return (
     <div className="prodwrap">
       {s && <div className="callouts">
-        <div className="callout2"><b>{money(s.top_value_dkk)} DKK</b><span>the {s.top_orders} biggest open orders</span></div>
+        <div className="callout2"><b>{money(s.top_value_dkk)} DKK</b><span>{s.top_orders} orders starting in the next 2 weeks</span></div>
         <div className="callout2"><b>{pct(s.top_share_pct)}</b><span>of all open order value ({money(s.open_value_dkk)} DKK, {s.open_orders} orders)</span></div>
         <div className="callout2"><b>{s.booked} of {s.top_orders}</b><span>booked with Dachser</span></div>
       </div>}
-      <Panel title="Biggest open orders by revenue" note={"start date today or later" + note}>
-        <table className="table">
-          <thead><tr><th>Customer</th><th>Order</th><th>Customer order</th><th>Start</th><th>Delivery</th>
-            <th className="num">Revenue DKK</th><th className="num">Picked</th><th>Status</th><th>Transport</th></tr></thead>
-          <tbody>
-            {rows.map((r: any, i: number) => {
-              const [label, cls] = TRANSPORT[r.transport] || ["Unknown", ""];
-              return (
-                <tr key={i}>
-                  <td>{r.customer}</td><td>{r.order}</td><td className="po">{r.po}</td><td>{day(r.start)}</td>
-                  <td>{r.delivery ? day(r.delivery) : "–"}</td>
-                  <td className="num">{dkk(r.revenue_dkk)}</td><td className="num">{pct(r.pick_rate_pct)}</td>
-                  <td>{r.status}</td>
-                  <td className={r.book_now ? "bad" : cls}>{r.book_now ? "Book now"
-                    : r.transport === "booked" && r.collection ? `Booked · collection ${fmtDayMonth(r.collection)}` : label}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <Panel title="Biggest orders by revenue" note={"start date in the next 2 weeks" + note}>
+        <FitTable rows={rows} more={(n) => `+ ${n} more orders in the next 2 weeks`}
+          head={<tr><th>Customer</th><th>Order</th><th>Customer order</th><th>Start</th><th>Delivery</th>
+            <th className="num">Revenue DKK</th><th className="num">Picked</th><th>Status</th><th>Transport</th></tr>}
+          row={(r: any, i: number) => {
+            const [label, cls] = TRANSPORT[r.transport] || ["Unknown", ""];
+            return (
+              <tr key={i}>
+                <td className="one">{r.customer}</td><td>{r.order}</td><td className="po one">{r.po}</td><td>{day(r.start)}</td>
+                <td>{r.delivery ? day(r.delivery) : "–"}</td>
+                <td className="num">{dkk(r.revenue_dkk)}</td><td className="num">{pct(r.pick_rate_pct)}</td>
+                <td className="one">{r.status}</td>
+                <td className={(r.book_now ? "bad" : cls) + " one"}>{r.book_now ? "Book now"
+                  : r.transport === "booked" && r.collection ? `Booked · collection ${fmtDayMonth(r.collection)}` : label}</td>
+              </tr>
+            );
+          }} />
       </Panel>
     </div>
   );
