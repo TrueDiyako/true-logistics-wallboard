@@ -189,3 +189,8 @@ people's Sent Items too (off by default).
   entry with its own grid layout.
 - Rules and thresholds: constants at the top of `jobs/live.py`, `jobs/nightly.py` and the extractors.
 - Run all tests: `cd jobs && for t in test_*.py; do python $t || exit 1; done`
+
+## Vercel build rule (vercel.json)
+The site is only rebuilt when something outside `jobs/` changed since the LAST DEPLOYED commit
+(Vercel's VERCEL_GIT_PREVIOUS_SHA); if that commit is unknown it always builds. (Until 26 Oct the
+rule compared with the previous commit only, so a merge commit could skip page changes.)

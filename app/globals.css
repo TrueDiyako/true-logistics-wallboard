@@ -138,3 +138,8 @@ header .title { flex: 0 1 auto; white-space: nowrap; }
 .panel.compact .empty { font-size: 1rem; }
 .al.picked { color: var(--good); font-weight: 600; }
 .al.picked .s { color: var(--good); width: auto; white-space: nowrap; }
+/* production days: the column keeps its row height so it can measure what fits */
+.prodwrap > .panel { display: flex; flex-direction: column; min-height: 0; }
+.prodwrap .ptable { flex: 1 1 0; min-height: 0; grid-template-rows: minmax(0, 1fr); }
+.prodwrap .pcol { min-height: 0; height: 100%; overflow: hidden; }
+.prodwrap .pcol > .run, .prodwrap .pcol > h3 { flex-shrink: 0; }

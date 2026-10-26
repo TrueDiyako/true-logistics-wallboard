@@ -341,39 +341,75 @@ const biggest: PanelFn = ({ live }) => {
 
 // ---------------- dashboard 5: production plan ----------------
 const RUN_NOTE: Record<string, string> = { produced: "produced", "awaiting registration": "plan · awaiting registration" };
+
+// One day column. All orders of a run arrive from the job; the column shows as many as fit:
+// after each render, if it overflows, the run currently showing the most rows gives one up
+// (it then gets "+ n more orders"). Resizing the window or new data starts again from all rows.
+function ProdDay({ day: d, runs }: { day: string; runs: any[] }) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  const full = runs.map((r: any) => r.alloc.length);
+  const sig = JSON.stringify(full) + "|" + runs.map((r: any) => r.sku + r.cases).join(",");
+  const [shown, setShown] = React.useState<number[]>(full);
+  const [size, setSize] = React.useState(0);
+  const key = sig + "|" + size;
+  const lastKey = React.useRef(key);
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let last = el.clientHeight;
+    const ro = new ResizeObserver(() => { if (el.clientHeight !== last) { last = el.clientHeight; setSize((s) => s + 1); } });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  React.useLayoutEffect(() => {
+    if (lastKey.current !== key) {                 // new data or new size: start again from all rows
+      lastKey.current = key;
+      setShown(full);
+      return;
+    }
+    const el = ref.current;
+    if (!el || el.scrollHeight <= el.clientHeight + 1) return;
+    let i = -1;
+    shown.forEach((n, k) => { if (n > 0 && (i < 0 || n > shown[i])) i = k; });
+    if (i >= 0) setShown(shown.map((n, k) => (k === i ? n - 1 : n)));
+  });
+  return (
+    <div className="pcol" ref={ref}>
+      <h3>{fmtDayNum(d)}</h3>
+      {runs.length === 0 && <div className="empty small">no production</div>}
+      {runs.map((r: any, i: number) => {
+        const n = Math.min(shown[i] ?? r.alloc.length, r.alloc.length);
+        const hidden = r.alloc.length - n + (r.more || 0);
+        return (
+          <div className={"run" + (r.status === "produced" ? " produced" : "")} key={i}>
+            <div className="runhead"><b>{r.flavour}</b>{r.lang && <span className="lang">{r.lang}</span>}
+              <span className="sku">{fmtNum(r.cases)} cs</span></div>
+            {r.status && r.status !== "planned" && (
+              <div className="runstate">{RUN_NOTE[r.status] || r.status}
+                {r.status === "produced" && r.planned_cases ? ` · plan ${fmtNum(r.planned_cases)}` : ""}
+                {r.unplanned ? " · not in the plan" : ""}</div>)}
+            {!r.sku && <div className="al nodata">Unknown article</div>}
+            {r.alloc.slice(0, n).map((a: any, j: number) => (
+              <div className={"al" + (a.picked ? " picked" : a.ready ? " ready" : "")} key={j}><span className="grow">{a.customer}</span>
+                <span className="q">{fmtNum(a.cases)}{a.cases === a.of ? "" : ` of ${fmtNum(a.of)}`}</span>
+                <span className="s">{a.picked ? "picked" : a.ready ? "pending picking" : day(a.start)}</span></div>
+            ))}
+            {hidden > 0 && <div className="al more2">+ {hidden} more orders</div>}
+            {r.free > 0 && <div className="al free"><span className="grow">Not yet allocated</span>
+              <span className="q">{fmtNum(r.free)}</span><span className="s" /></div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const productionLine = (name: string, p: any) => {
   const runs = (p.lines || {})[name] || [];
   return (
     <Panel title={name}>
       <div className="ptable" style={{ gridTemplateColumns: `repeat(${p.days.length}, minmax(0, 1fr))` }}>
-        {p.days.map((d: string) => {
-          const today = runs.filter((r: any) => r.day === d);
-          return (
-            <div className="pcol" key={d}>
-              <h3>{fmtDayNum(d)}</h3>
-              {today.length === 0 && <div className="empty small">no production</div>}
-              {today.map((r: any, i: number) => (
-                <div className={"run" + (r.status === "produced" ? " produced" : "")} key={i}>
-                  <div className="runhead"><b>{r.flavour}</b>{r.lang && <span className="lang">{r.lang}</span>}
-                    <span className="sku">{fmtNum(r.cases)} cs</span></div>
-                  {r.status && r.status !== "planned" && (
-                    <div className="runstate">{RUN_NOTE[r.status] || r.status}
-                      {r.status === "produced" && r.planned_cases ? ` · plan ${fmtNum(r.planned_cases)}` : ""}
-                      {r.unplanned ? " · not in the plan" : ""}</div>)}
-                  {!r.sku && <div className="al nodata">Unknown article</div>}
-                  {r.alloc.map((a: any, j: number) => (
-                    <div className={"al" + (a.picked ? " picked" : a.ready ? " ready" : "")} key={j}><span className="grow">{a.customer}</span>
-                      <span className="q">{fmtNum(a.cases)}{a.cases === a.of ? "" : ` of ${fmtNum(a.of)}`}</span>
-                      <span className="s">{a.picked ? "picked" : a.ready ? "pending picking" : day(a.start)}</span></div>
-                  ))}
-                  {r.more > 0 && <div className="al more2">+ {r.more} more orders</div>}
-                  {r.free > 0 && <div className="al free"><span className="grow">Not yet allocated</span>
-                    <span className="q">{fmtNum(r.free)}</span><span className="s" /></div>}
-                </div>
-              ))}
-            </div>
-          );
-        })}
+        {p.days.map((d: string) => <ProdDay key={d} day={d} runs={runs.filter((r: any) => r.day === d)} />)}
       </div>
     </Panel>
   );

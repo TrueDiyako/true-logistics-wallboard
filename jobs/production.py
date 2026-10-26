@@ -28,7 +28,7 @@ PLAN_FILE_ID = "1-Fukp_lmo6f91qXlZ5jiqv6Rgo7Y4hdr"
 PLAN_URL = f"https://drive.google.com/uc?export=download&id={PLAN_FILE_ID}"
 LINES = ("Laudenberg", "Bossar")
 BAGS_PER_CASE = 12
-MAX_ROWS_PER_RUN = 4          # shown under a run; the rest is "+n more"
+MAX_ROWS_PER_RUN = 40         # sent per run; the page shows as many as fit, the rest as "+n more"
 
 LANG_PREFIX = {"DE/NL": "60", "CZ/SK": "62", "EN/DK": "63", "AU/NZ": "64", "US": "66", "CA": "67"}
 FLAVOUR_CODE = {"sour cola": "01", "sweet peach": "02", "cookie dough": "03", "peanut butter": "04",
@@ -265,8 +265,7 @@ def allocate(runs, reservations, picks=None):
             x["left"] -= take
             cap -= take
         shown = done + rows
-        out.append(dict(run, alloc=shown[:MAX_ROWS_PER_RUN + len(done)] if done else rows[:MAX_ROWS_PER_RUN],
-                        more=max(0, len(rows) - MAX_ROWS_PER_RUN), free=cap))
+        out.append(dict(run, alloc=shown[:MAX_ROWS_PER_RUN], more=max(0, len(shown) - MAX_ROWS_PER_RUN), free=cap))
     return out
 
 

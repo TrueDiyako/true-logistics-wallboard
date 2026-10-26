@@ -46,11 +46,14 @@ def test_allocation_by_start_date_across_both_lines():
     assert [(a["cases"], a["of"]) for a in cz_wed["alloc"]] == [(1835, 1890), (567, 567)] and cz_wed["free"] == 514
     assert out["week"] == 41 and out["days"][-1] == "2026-10-10" and len(out["days"]) == 6   # Saturday shown: a run is planned
 
-def test_max_rows_and_more():
+def test_all_rows_are_sent_the_page_decides_what_fits():
     many = [{"sku": "6706", "order": str(i), "customer": f"C{i}", "start": f"2026-10-{10+i}", "cases": 10} for i in range(7)]
     out = p.build(plan_xlsx(), many, dt.date(2026, 10, 8))
     ca = out["lines"]["Laudenberg"][0]
-    assert len(ca["alloc"]) == 4 and ca["more"] == 3 and ca["free"] == 2916 - 70
+    assert len(ca["alloc"]) == 7 and ca["more"] == 0 and ca["free"] == 2916 - 70
+    lots = [{"sku": "6706", "order": str(i), "customer": f"C{i}", "start": "2026-10-20", "cases": 1} for i in range(50)]
+    ca = p.build(plan_xlsx(), lots, dt.date(2026, 10, 8))["lines"]["Laudenberg"][0]
+    assert len(ca["alloc"]) == p.MAX_ROWS_PER_RUN and ca["more"] == 50 - p.MAX_ROWS_PER_RUN   # safety cap only
 
 def test_not_excel_is_a_clear_error():
     class R:
