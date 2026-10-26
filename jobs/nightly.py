@@ -153,17 +153,19 @@ OWNER_ROLLING_WEEKS = 4         # each point = credits / invoices over the last 
 
 
 def owner_weekly(window, rows, owners, weeks):
-    """Per logistics owner and week: credit notes on their customers / invoices to their customers,
-    summed over the last OWNER_ROLLING_WEEKS weeks (a week alone often has only 3-8 invoices)."""
+    """Per logistics owner and week: credit notes on their customers / ALL invoices (non-internal),
+    summed over the last OWNER_ROLLING_WEEKS weeks. Each line is that person's share of the overall
+    credit rate, so the lines (plus customers without an owner) add up to the total - not a personal
+    rate that depends on how many invoices their customers get."""
     inv, cr = {}, {}
     for i in window:
         if float(i.get("netAmount", 0)) <= 0:
             continue
         c = str((i.get("customer") or {}).get("customerNumber", ""))
-        if c in cx.INTERNAL_CUSTOMERS or c not in owners:
+        if c in cx.INTERNAL_CUSTOMERS:
             continue
-        k = (owners[c], iso_week(dt.date.fromisoformat(i["date"][:10])))
-        inv[k] = inv.get(k, 0) + 1
+        k = iso_week(dt.date.fromisoformat(i["date"][:10]))
+        inv[k] = inv.get(k, 0) + 1                       # all invoices, whoever owns the customer
     for r in rows:
         c = str(r.get("customer_number", ""))
         if r.get("internal") or c not in owners:
@@ -180,7 +182,7 @@ def owner_weekly(window, rows, owners, weeks):
         for w in weeks:
             span = [back(w, n) for n in range(OWNER_ROLLING_WEEKS)]
             c = sum(cr.get((o, x), 0) for x in span)
-            i = sum(inv.get((o, x), 0) for x in span)
+            i = sum(inv.get(x, 0) for x in span)
             pts.append({"week": w, "credits": c, "invoices": i, "pct": pct(c, i)})
         out[o] = pts
     return out
@@ -194,8 +196,9 @@ def closeout_share(rows, closeout_orders, po_to_order, since=CLOSEOUT_FROM):
     for r in scope:
         orders = {int(o) for o in r.get("orders") or []}
         po = str(r.get("heading") or "").strip().lower()
-        if po in po_to_order:
-            orders.add(po_to_order[po])
+        if not orders and po in po_to_order:
+            hit = po_to_order[po]
+            orders |= set(hit) if isinstance(hit, (set, list, tuple)) else {hit}
         if not orders:
             unknown += 1
         out.append({"credit_note": r["credit_note"], "orders": sorted(orders),
@@ -243,15 +246,26 @@ def closeout_orders():
     return out
 
 
-def po_orders(tl):
-    """TraceLink order name (customer PO) -> order number, for credit notes without an order reference."""
+def po_orders(tl, names):
+    """TraceLink order name (customer PO) -> order numbers, only for the given names (the headings
+    of credit notes without an order reference). Asking for all orders of 8 months hit TraceLink's
+    1000-row limit (1828 orders, 26 Oct), so the names are looked up directly, 20 per request."""
     tl = tl or ox.TraceLink()
-    since = (dt.date.today() - dt.timedelta(days=240)).isoformat()
+    names = sorted({str(n).strip() for n in names if str(n or "").strip()})
     out = {}
-    for o in tl.list_orders({"order_group_id": f"={ox.SALES_GROUP}", "start_date": f">{since}"}):
-        name = str(o.get("name") or "").strip().lower()
-        if name and not o.get("delete_dt"):
-            out.setdefault(name, int(o["number"]))
+    plain = [n for n in names if "," not in n and "(" not in n and ")" not in n]
+    for i in range(0, len(plain), 20):                       # IN(...) for names without commas/brackets
+        chunk = plain[i:i + 20]
+        found = tl.list_orders({"name": "IN(" + ",".join(chunk) + ")"})
+        for o in found:
+            if not o.get("delete_dt"):
+                out.setdefault(str(o.get("name") or "").strip().lower(), set()).add(int(o["number"]))
+    for n in names:                                          # the rest one by one
+        if n in plain:
+            continue
+        for o in tl.list_orders({"name": f"={n}"}):
+            if not o.get("delete_dt"):
+                out.setdefault(str(o.get("name") or "").strip().lower(), set()).add(int(o["number"]))
     return out
 
 
@@ -295,7 +309,9 @@ def main(tl=None, graph=None, econ=None, today=None):
         except Exception as e:                               # the total line still shows
             print(f"credit by owner failed: {e}", flush=True)
         try:
-            c["closeout"] = closeout_share(rows, closeout_orders(), po_orders(tl))
+            need = {r.get("heading") for r in rows if not r.get("internal") and not r.get("orders")
+                    and str(r["date"])[:10] >= CLOSEOUT_FROM}
+            c["closeout"] = closeout_share(rows, closeout_orders(), po_orders(tl, need))
         except Exception as e:
             import traceback
             traceback.print_exc()

@@ -445,12 +445,15 @@ def test_credit_split_by_logistics_owner():
             {"customer_number": "1308", "date": "2026-10-20", "internal": False},
             {"customer_number": "9999", "date": "2026-10-13", "internal": False}]
     w = nightly.owner_weekly(window, rows, owners, ["2026-W42", "2026-W43"])
-    # rolling 4 weeks: W43 includes W42
-    assert w["Frederikke"][0] == {"week": "2026-W42", "credits": 1, "invoices": 2, "pct": 50.0}
-    assert w["Frederikke"][1] == {"week": "2026-W43", "credits": 1, "invoices": 2, "pct": 50.0}
-    assert w["Andreas"][0]["pct"] == 0.0 and w["Andreas"][1] == {"week": "2026-W43", "credits": 1, "invoices": 2, "pct": 50.0}
-    assert w["Valentina"][1] == {"week": "2026-W43", "credits": 0, "invoices": 1, "pct": 0.0}    # no gap after a quiet week
-    w = nightly.owner_weekly(window, rows, owners, ["2026-W47"])                                     # 4 weeks later: W42/43 dropped
+    # denominator = ALL non-internal invoices (6 in W42 incl. the customer without an owner, +1 in W43)
+    assert w["Frederikke"][0] == {"week": "2026-W42", "credits": 1, "invoices": 5, "pct": 20.0}
+    assert w["Frederikke"][1] == {"week": "2026-W43", "credits": 1, "invoices": 6, "pct": 16.7}   # rolling 4 weeks
+    assert w["Andreas"][1] == {"week": "2026-W43", "credits": 1, "invoices": 6, "pct": 16.7}
+    assert w["Valentina"][1]["pct"] == 0.0
+    # the lines plus the unowned customer add up to the overall rate (W42: 2 credit notes of 5 invoices)
+    unowned = 1
+    assert round(sum(w[o][0]["credits"] for o in w) + unowned, 1) == 2
+    w = nightly.owner_weekly(window, rows, owners, ["2026-W47"])                                     # 4 weeks later
     assert w["Frederikke"][0]["invoices"] == 0 and w["Frederikke"][0]["pct"] is None
 
 def test_closeout_share_since_week_41():
@@ -461,7 +464,7 @@ def test_closeout_share_since_week_41():
             {"credit_note": 20898, "date": "2026-10-15", "internal": False, "orders": [], "heading": "252402"},     # no TraceLink order
             {"credit_note": 20700, "date": "2026-09-30", "internal": False, "orders": [1022905], "heading": ""},   # before week 41
             {"credit_note": 20701, "date": "2026-10-12", "internal": True, "orders": [], "heading": ""}]
-    po = {"tr-40": 1022422, "po229336": 1022742}
+    po = {"tr-40": {1022422}, "po229336": {1022742}}
     closed = {1022905, 1022927, 1023008}                                      # real closeout logs (19-20 Oct)
     s = nightly.closeout_share(rows, closed, po)
     assert s["credit_notes"] == 4 and s["without_closeout"] == 4 and s["pct_without_closeout"] == 100.0
@@ -471,6 +474,50 @@ def test_closeout_share_since_week_41():
     rows.append({"credit_note": 20950, "date": "2026-10-21", "internal": False, "orders": [1023008], "heading": "10087876-Tru"})
     s = nightly.closeout_share(rows, closed, po)
     assert s["credit_notes"] == 5 and s["without_closeout"] == 4 and s["pct_without_closeout"] == 80.0
+
+def test_po_lookup_asks_only_for_the_needed_names():
+    calls = []
+    class TL:
+        def list_orders(self, f):
+            calls.append(f)
+            db = [{"number": "1022422", "name": "TR-40"}, {"number": "1022742", "name": "PO229336"},
+                  {"number": "1020448", "name": "GKR Trade March order 3"}, {"number": "1022999", "name": "Order 2, part B"},
+                  {"number": "1022998", "name": "TR-40", "delete_dt": "2026-10-01"}]
+            if f["name"].startswith("IN("):
+                want = f["name"][3:-1].split(",")
+                return [o for o in db if o["name"] in want]
+            return [o for o in db if o["name"] == f["name"][1:]]
+    m = nightly.po_orders(TL(), {"TR-40", "PO229336", "GKR Trade March order 3", "Order 2, part B", "252402", "", None})
+    assert m == {"tr-40": {1022422}, "po229336": {1022742}, "gkr trade march order 3": {1020448}, "order 2, part b": {1022999}}
+    assert len(calls) == 2 and calls[0]["name"].startswith("IN(") and calls[1] == {"name": "=Order 2, part B"}
+    assert all("start_date" not in c for c in calls)                       # no 8-month bulk list any more
+
+def test_po_lookup_asks_only_for_the_needed_pos():
+    # real (26 Oct): listing all sales orders of 8 months hit TraceLink's 1000 limit (1828 orders)
+    asked = []
+    class TL:
+        def list_orders(self, f):
+            asked.append(f["name"])
+            real = {"TR-40": "1022422", "PO229336": "1022742", "Order 1, B&B": "1022999"}
+            if f["name"].startswith("IN("):
+                names = f["name"][3:-1].split(",")
+            else:
+                names = [f["name"][1:]]
+            return [{"number": real[n], "name": n, "delete_dt": None} for n in names if n in real]
+    rows = [{"credit_note": 1, "date": "2026-10-08", "internal": False, "orders": [], "heading": "TR-40"},
+            {"credit_note": 2, "date": "2026-10-19", "internal": False, "orders": [], "heading": "PO229336"},
+            {"credit_note": 3, "date": "2026-10-15", "internal": False, "orders": [], "heading": "252402"},
+            {"credit_note": 4, "date": "2026-10-14", "internal": False, "orders": [1022780], "heading": "1022780 - LVK"},
+            {"credit_note": 5, "date": "2026-10-16", "internal": False, "orders": [], "heading": "Order 1, B&B"}]
+    need = {r["heading"] for r in rows if not r["orders"]}
+    po = nightly.po_orders(TL(), need)
+    assert asked[0].startswith("IN(") and set(asked[0][3:-1].split(",")) == {"TR-40", "PO229336", "252402"}
+    assert asked[1] == "=Order 1, B&B"                                   # comma in the name: asked on its own
+    s = nightly.closeout_share(rows, {1022742}, po)
+    d = {x["credit_note"]: x["orders"] for x in s["detail"]}
+    assert d[1] == [1022422] and d[2] == [1022742] and d[3] == [] and d[5] == [1022999]
+    assert s["credit_notes"] == 5 and s["without_closeout"] == 4 and s["pct_without_closeout"] == 80.0
+    assert s["no_order_found"] == 1
 
 def test_cph_now_is_naive_local():
     n = common.cph_now()
