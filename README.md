@@ -190,6 +190,14 @@ people's Sent Items too (off by default).
 - Rules and thresholds: constants at the top of `jobs/live.py`, `jobs/nightly.py` and the extractors.
 - Run all tests: `cd jobs && for t in test_*.py; do python $t || exit 1; done`
 
+## Credit notes per logistics owner (dashboard 1)
+Three lines: per week, credit notes on the customers of Valentina, Frederikke and Andreas divided by
+invoices to those customers. Customer -> owner via the customer's invoice e-mail in e-conomic and
+jobs/customer_owners.csv. Second headline: of the credit notes since week 41 (5 Oct 2026), the share
+whose TraceLink order was NOT closed out with the tracelink-order-closeout skill (100% = none were).
+A credit note's order = its "Order no. #" reference, the order numbers of the invoices it belongs
+with, or its heading (customer PO) looked up in TraceLink. Nightly job; needs GOOGLE_SERVICE_ACCOUNT_JSON.
+
 ## Vercel build rule (vercel.json)
 The site is only rebuilt when something outside `jobs/` changed since the LAST DEPLOYED commit
 (Vercel's VERCEL_GIT_PREVIOUS_SHA); if that commit is unknown it always builds. (Until 26 Oct the

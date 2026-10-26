@@ -131,6 +131,65 @@ def response_payload(rows, today=None, tracelink_refs=None):
 
 
 # ----------------------------- credit notes --------------------------------
+LOGISTICS_OWNERS = ["Valentina", "Frederikke", "Andreas"]
+CLOSEOUT_FROM = "2026-10-05"     # week 41: order-closeout skill share counts credit notes from here
+
+
+def customer_owners(econ):
+    """{e-conomic customer number: logistics owner}, via the customer's invoice e-mail domain and
+    jobs/customer_owners.csv (the same list as the e-mail panel)."""
+    url, out = "https://restapi.e-conomic.com/customers?pagesize=1000", {}
+    while url:
+        res = econ._get(url)
+        for c in res.get("collection", []):
+            owner = rx.owner_of(str(c.get("email") or "").strip().lower()).get("responsible", "")
+            if owner:
+                out[str(c["customerNumber"])] = owner
+        url = (res.get("pagination") or {}).get("nextPage")
+    return out
+
+
+def owner_weekly(window, rows, owners, weeks):
+    """Per logistics owner and week: credit notes on their customers / invoices to their customers."""
+    inv, cr = {}, {}
+    for i in window:
+        if float(i.get("netAmount", 0)) <= 0:
+            continue
+        c = str((i.get("customer") or {}).get("customerNumber", ""))
+        if c in cx.INTERNAL_CUSTOMERS or c not in owners:
+            continue
+        k = (owners[c], iso_week(dt.date.fromisoformat(i["date"][:10])))
+        inv[k] = inv.get(k, 0) + 1
+    for r in rows:
+        c = str(r.get("customer_number", ""))
+        if r.get("internal") or c not in owners:
+            continue
+        k = (owners[c], iso_week(dt.date.fromisoformat(str(r["date"])[:10])))
+        cr[k] = cr.get(k, 0) + 1
+    return {o: [{"week": w, "credits": cr.get((o, w), 0), "invoices": inv.get((o, w), 0),
+                 "pct": pct(cr.get((o, w), 0), inv.get((o, w), 0))} for w in weeks] for o in LOGISTICS_OWNERS}
+
+
+def closeout_share(rows, closeout_orders, po_to_order, since=CLOSEOUT_FROM):
+    """Of the credit notes since `since`: how many concern an order that was NOT closed out
+    with the order-closeout skill (100% = none of them were)."""
+    scope = [r for r in rows if not r.get("internal") and str(r["date"])[:10] >= since]
+    out, unknown = [], 0
+    for r in scope:
+        orders = {int(o) for o in r.get("orders") or []}
+        po = str(r.get("heading") or "").strip().lower()
+        if po in po_to_order:
+            orders.add(po_to_order[po])
+        if not orders:
+            unknown += 1
+        out.append({"credit_note": r["credit_note"], "orders": sorted(orders),
+                    "closeout": bool(orders & closeout_orders)})
+    n = len(out)
+    not_used = sum(1 for x in out if not x["closeout"])
+    return {"since": since, "credit_notes": n, "without_closeout": not_used, "no_order_found": unknown,
+            "pct_without_closeout": pct(not_used, n), "detail": out}
+
+
 def credit_payload(weekly, rows, today=None):
     scope = [r for r in rows if not r["internal"]]
     inv = sum(w["invoices"] for w in weekly)          # headline: the whole window
@@ -152,6 +211,32 @@ def credit_payload(weekly, rows, today=None):
             "weekly": [{"week": w["period"], "pct": w["credit_pct_count"], "credits": w["credits"],
                         "invoices": w["invoices"]} for w in weekly],
             "to_check": sorted(to_check, key=lambda x: x["amount_dkk"])}
+
+
+def closeout_orders():
+    """TraceLink order numbers the order-closeout skill was used on (Claude logs on Drive)."""
+    import skill_usage
+    drive = skill_usage.Drive()
+    if not drive.connected:
+        return set()
+    out = set()
+    for f in drive.list_folder(skill_usage.FOLDER_ID, dt.date(2026, 10, 1)):
+        m = skill_usage._NAME.match(f.get("name") or "")
+        if m and m["skill"] == "tracelink-order-closeout" and (m["ref"] or "").strip().isdigit():
+            out.add(int(m["ref"].strip()))
+    return out
+
+
+def po_orders(tl):
+    """TraceLink order name (customer PO) -> order number, for credit notes without an order reference."""
+    tl = tl or ox.TraceLink()
+    since = (dt.date.today() - dt.timedelta(days=240)).isoformat()
+    out = {}
+    for o in tl.list_orders({"order_group_id": f"={ox.SALES_GROUP}", "start_date": f">{since}"}):
+        name = str(o.get("name") or "").strip().lower()
+        if name and not o.get("delete_dt"):
+            out.setdefault(name, int(o["number"]))
+    return out
 
 
 # ----------------------------- main ----------------------------------------
@@ -185,8 +270,19 @@ def main(tl=None, graph=None, econ=None, today=None):
         cx.DATE_FROM, cx.DATE_TO = since, None
         cx.INCLUDE_INTERNAL_IN_HEADLINE = False
         cx.OUTPUT_DIR = os.path.join(work, "credit")
-        _, weekly, rows = cx.run(econ or cx.Economic(), today=today)
-        payload["credit"] = credit_payload(weekly, rows, today)
+        api = econ or cx.Economic()
+        _, weekly, rows = cx.run(api, today=today)
+        c = credit_payload(weekly, rows, today)
+        weeks = [w["week"] for w in c["weekly"]]
+        try:
+            c["by_owner"] = owner_weekly(cx.LAST_WINDOW, rows, customer_owners(api), weeks)
+        except Exception as e:                               # the total line still shows
+            print(f"credit by owner failed: {e}", flush=True)
+        try:
+            c["closeout"] = closeout_share(rows, closeout_orders(), po_orders(tl))
+        except Exception as e:
+            print(f"closeout share failed: {e}", flush=True)
+        payload["credit"] = c
 
     h.section("otif", otif)
     h.section("response", response)

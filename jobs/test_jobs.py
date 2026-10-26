@@ -428,6 +428,46 @@ def test_hannover_order_uses_the_warehouse_status():
     finally:
         dachser_notes.dachser, dachser_notes.DACHSER_STATUS_KEY = orig
 
+def test_credit_split_by_logistics_owner():
+    class Econ:
+        def _get(self, url):
+            return {"collection": [{"customerNumber": 1175, "email": "invoicedkpur@sallinggroup.com"},   # real e-conomic e-mails
+                                   {"customerNumber": 1347, "email": "info@gkr.ee"},
+                                   {"customerNumber": 1308, "email": "mark@realfooddistributors.com.au"},
+                                   {"customerNumber": 9999, "email": "someone@unknown-customer.xyz"}], "pagination": {}}
+    owners = nightly.customer_owners(Econ())
+    assert owners == {"1175": "Frederikke", "1347": "Valentina", "1308": "Andreas"}
+    I = lambda n, c, day, amt: {"bookedInvoiceNumber": n, "customer": {"customerNumber": c}, "date": day, "netAmount": amt}
+    window = [I(1, 1175, "2026-10-13", 100), I(2, 1175, "2026-10-14", 100), I(3, 1347, "2026-10-13", 100),
+              I(4, 1308, "2026-10-13", 100), I(5, 1308, "2026-10-20", 100), I(6, 9999, "2026-10-13", 100),
+              I(7, 1175, "2026-10-14", -20)]                                   # credit notes are not invoices
+    rows = [{"customer_number": "1175", "date": "2026-10-14", "internal": False},
+            {"customer_number": "1308", "date": "2026-10-20", "internal": False},
+            {"customer_number": "9999", "date": "2026-10-13", "internal": False}]
+    w = nightly.owner_weekly(window, rows, owners, ["2026-W42", "2026-W43"])
+    assert w["Frederikke"][0] == {"week": "2026-W42", "credits": 1, "invoices": 2, "pct": 50.0}
+    assert w["Valentina"][0]["pct"] == 0.0 and w["Andreas"][0]["pct"] == 0.0 and w["Andreas"][1]["pct"] == 100.0
+    assert w["Valentina"][1] == {"week": "2026-W43", "credits": 0, "invoices": 0, "pct": None}
+
+def test_closeout_share_since_week_41():
+    # real (credit notes 5-20 Oct): none of their orders went through order-closeout -> 100%
+    rows = [{"credit_note": 20923, "date": "2026-10-08", "internal": False, "orders": [], "heading": "TR-40"},
+            {"credit_note": 20887, "date": "2026-10-14", "internal": False, "orders": [1022780], "heading": "1022780 - LVK H&B promotion"},
+            {"credit_note": 20921, "date": "2026-10-19", "internal": False, "orders": [], "heading": "PO229336"},
+            {"credit_note": 20898, "date": "2026-10-15", "internal": False, "orders": [], "heading": "252402"},     # no TraceLink order
+            {"credit_note": 20700, "date": "2026-09-30", "internal": False, "orders": [1022905], "heading": ""},   # before week 41
+            {"credit_note": 20701, "date": "2026-10-12", "internal": True, "orders": [], "heading": ""}]
+    po = {"tr-40": 1022422, "po229336": 1022742}
+    closed = {1022905, 1022927, 1023008}                                      # real closeout logs (19-20 Oct)
+    s = nightly.closeout_share(rows, closed, po)
+    assert s["credit_notes"] == 4 and s["without_closeout"] == 4 and s["pct_without_closeout"] == 100.0
+    assert s["no_order_found"] == 1
+    assert {d["credit_note"]: d["orders"] for d in s["detail"]}[20923] == [1022422]      # found via the PO
+    # one credit note on an order that WAS closed out with the skill -> 75% without
+    rows.append({"credit_note": 20950, "date": "2026-10-21", "internal": False, "orders": [1023008], "heading": "10087876-Tru"})
+    s = nightly.closeout_share(rows, closed, po)
+    assert s["credit_notes"] == 5 and s["without_closeout"] == 4 and s["pct_without_closeout"] == 80.0
+
 def test_cph_now_is_naive_local():
     n = common.cph_now()
     assert n.tzinfo is None

@@ -20,6 +20,7 @@ jobs:
       AGREEMENT_GRANT_TOKEN: ${{ secrets.AGREEMENT_GRANT_TOKEN }}
       KV_REST_API_URL: ${{ secrets.KV_REST_API_URL }}
       KV_REST_API_TOKEN: ${{ secrets.KV_REST_API_TOKEN }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}   # order-closeout skill logs
       GRAPH_SECRET_EXPIRES: ${{ vars.GRAPH_SECRET_EXPIRES }}
       OTIF_CACHE_DIR: otif_cache
     steps:
@@ -32,7 +33,7 @@ jobs:
           path: jobs/otif_cache
           key: otif-cache-${{ github.run_id }}
           restore-keys: otif-cache-
-      - run: pip install openpyxl==3.1.5
+      - run: pip install openpyxl==3.1.5 google-auth==2.35.0 requests==2.32.3
       - name: Tests
         run: |
           KV_REST_API_URL= python test_otif.py

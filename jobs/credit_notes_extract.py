@@ -115,6 +115,9 @@ def dkk(inv):
     return float(v)
 
 
+LAST_WINDOW = []
+
+
 def heading(inv):
     return ((inv.get("notes") or {}).get("heading") or "").strip()
 
@@ -214,6 +217,10 @@ def classify(credits, invoices, details):
     for r in rows:
         ch = chains.get(r["credit_note"], {})
         r["chain"] = ch.get("key", "")
+        # the TraceLink order(s) this credit note is about: its own "Order no. #" reference and the
+        # order numbers of the invoices in its chain (e-conomic order number = TraceLink order number)
+        own = ref_order(next((c for c in credits if c["bookedInvoiceNumber"] == r["credit_note"]), {}))
+        r["orders"] = sorted(set(ch.get("orders", [])) | ({own} if own else set()))
         r["chain_documents"] = ch.get("documents", 0)
         r["chain_net"] = ch.get("net", "")
         r["over_credited"] = bool(ch) and ch["has_invoice"] and ch["net"] < -0.01
@@ -258,7 +265,10 @@ def chain_balances(docs):
     out = {}
     for root, members in groups.items():
         net = round(sum(float(m.get("netAmount", 0)) for m in members), 2)
+        orders = {int(m["orderNumber"]) for m in members if float(m.get("netAmount", 0)) > 0 and m.get("orderNumber")}
+        orders |= {ref_order(m) for m in members if ref_order(m)}
         info = {"key": " / ".join(sorted({heading(m) for m in members if heading(m)})) or str(root[1]),
+                "orders": sorted(orders),
                 "documents": len(members), "net": net,
                 "has_invoice": any(float(m.get("netAmount", 0)) > 0 for m in members)}
         for m in members:
@@ -386,6 +396,8 @@ def run(api, today=None):
     print(f"Reading booked invoices {d_from - dt.timedelta(days=LOOKBACK_DAYS)} .. {d_to}", flush=True)
     allinv = api.booked_invoices(d_from - dt.timedelta(days=LOOKBACK_DAYS), d_to)
     window = [i for i in allinv if d_from <= d(i["date"]) <= d_to]
+    global LAST_WINDOW
+    LAST_WINDOW = window                          # invoices of the window, for per-owner splits
     credits = [i for i in window if float(i.get("netAmount", 0)) < 0]
     print(f"{len(window)} invoices in window, {len(credits)} credit notes; reading lines ...", flush=True)
     details = {}

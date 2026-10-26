@@ -142,15 +142,27 @@ const responsePanel: PanelFn = ({ kpi }) => {
   );
 };
 
+const OWNER_COLORS: Record<string, string> = { Valentina: "#4F7A80", Frederikke: "#C9922E", Andreas: "#8C5B3E" };
 const creditPanel: PanelFn = ({ kpi }) => {
   const c = kpi?.credit;
   if (!c) return <Panel title="Credit notes"><Missing /></Panel>;
   const w = c.weekly || [];
+  const by = c.by_owner || null;
+  const co = c.closeout;
+  const items: any[] = [{ label: `${c.headline.credits} of ${c.headline.invoices} invoices, 13 weeks`,
+                          value: pct(c.headline.credit_pct), color: C.credit }];
+  if (co && co.credit_notes)
+    items.push({ label: `of ${co.credit_notes} credit notes since W41 without order closeout`,
+                 value: pct(co.pct_without_closeout), color: C.noReply });
+  const series = by
+    ? Object.keys(OWNER_COLORS).filter((o) => by[o]).map((o) => ({ name: o, values: by[o].map((x: any) => x.pct),
+                                                                   color: OWNER_COLORS[o], width: 5 }))
+    : [{ name: "Credited", values: w.map((x: any) => x.pct), color: C.credit, width: 7 }];
   return (
-    <Panel title="Credit notes" note="% of invoices credited">
-      <Headlines items={[{ label: `${c.headline.credits} of ${c.headline.invoices} invoices, 13 weeks`,
-                           value: pct(c.headline.credit_pct), color: C.credit }]} />
-      <LineChart labels={w.map((x: any) => x.week)} series={[{ name: "Credited", values: w.map((x: any) => x.pct), color: C.credit, width: 7 }]} />
+    <Panel title="Credit notes" note={by ? "% of invoices credited · per logistics owner" : "% of invoices credited"}>
+      <Headlines items={items} />
+      <LineChart labels={w.map((x: any) => x.week)} series={series} />
+      {by && <Legend items={Object.keys(OWNER_COLORS).filter((o) => by[o]).map((o) => ({ label: o, color: OWNER_COLORS[o] }))} />}
     </Panel>
   );
 };

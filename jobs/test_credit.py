@@ -125,6 +125,16 @@ def test_chain_via_order_reference_when_headings_differ():
     r = {x["credit_note"]: x for x in cx.classify([c, c2], [i, c, c2], {})}
     assert r[20599]["over_credited"] and r[20599]["chain_net"] == -1000.0
 
+def test_credit_note_knows_its_orders():
+    h = "EB51"
+    i1 = INV(20131, "2026-08-10", 1692, 37046.4, heading=h, order=1022096)
+    c1 = INV(20517, "2026-08-10", 1692, -37046.4, heading=h)
+    i2 = INV(20518, "2026-09-10", 1692, 36012.19, heading=h, order=1022711)
+    c2 = INV(20599, "2026-09-12", 1692, -1000.0, heading="other", text="Order no. #1021530")
+    r = {x["credit_note"]: x for x in cx.classify([c1, c2], [i1, c1, i2, c2], {})}
+    assert r[20517]["orders"] == [1022096, 1022711]          # orders of the invoices in its chain
+    assert 1021530 in r[20599]["orders"]                       # its own "Order no. #" reference
+
 def test_price_typo_correction():
     # real Dollarstore: 5760 x 2940 DKK invoiced instead of 2.94, credited and re-issued same day
     o = INV(19894, "2026-07-15", 2200, 16934400.0, heading="6498641", cur="DKK", rate=100)
