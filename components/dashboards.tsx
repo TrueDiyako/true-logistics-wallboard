@@ -151,15 +151,18 @@ const creditPanel: PanelFn = ({ kpi }) => {
   const co = c.closeout;
   const items: any[] = [{ label: `${c.headline.credits} of ${c.headline.invoices} invoices, 13 weeks`,
                           value: pct(c.headline.credit_pct), color: C.credit }];
-  if (co && co.credit_notes)
-    items.push({ label: `of ${co.credit_notes} credit notes since W41 without order closeout`,
-                 value: pct(co.pct_without_closeout), color: C.noReply });
+  if (co)
+    items.push({ label: co.credit_notes ? `of ${co.credit_notes} credit notes since W41 without order closeout`
+                                        : "no credit notes since W41",
+                 value: co.credit_notes ? pct(co.pct_without_closeout) : "–", color: C.noReply });
+  else if (by || c.closeout_error)
+    items.push({ label: "without order closeout: not available (see nightly log)", value: "–", color: C.noReply });
   const series = by
     ? Object.keys(OWNER_COLORS).filter((o) => by[o]).map((o) => ({ name: o, values: by[o].map((x: any) => x.pct),
-                                                                   color: OWNER_COLORS[o], width: 5 }))
+                                                                   color: OWNER_COLORS[o], width: 4 }))
     : [{ name: "Credited", values: w.map((x: any) => x.pct), color: C.credit, width: 7 }];
   return (
-    <Panel title="Credit notes" note={by ? "% of invoices credited · per logistics owner" : "% of invoices credited"}>
+    <Panel title="Credit notes" note={by ? "% of invoices credited · per logistics owner, last 4 weeks rolling" : "% of invoices credited"}>
       <Headlines items={items} />
       <LineChart labels={w.map((x: any) => x.week)} series={series} />
       {by && <Legend items={Object.keys(OWNER_COLORS).filter((o) => by[o]).map((o) => ({ label: o, color: OWNER_COLORS[o] }))} />}

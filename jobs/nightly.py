@@ -149,8 +149,12 @@ def customer_owners(econ):
     return out
 
 
+OWNER_ROLLING_WEEKS = 4         # each point = credits / invoices over the last 4 weeks (smooths small counts)
+
+
 def owner_weekly(window, rows, owners, weeks):
-    """Per logistics owner and week: credit notes on their customers / invoices to their customers."""
+    """Per logistics owner and week: credit notes on their customers / invoices to their customers,
+    summed over the last OWNER_ROLLING_WEEKS weeks (a week alone often has only 3-8 invoices)."""
     inv, cr = {}, {}
     for i in window:
         if float(i.get("netAmount", 0)) <= 0:
@@ -166,8 +170,20 @@ def owner_weekly(window, rows, owners, weeks):
             continue
         k = (owners[c], iso_week(dt.date.fromisoformat(str(r["date"])[:10])))
         cr[k] = cr.get(k, 0) + 1
-    return {o: [{"week": w, "credits": cr.get((o, w), 0), "invoices": inv.get((o, w), 0),
-                 "pct": pct(cr.get((o, w), 0), inv.get((o, w), 0))} for w in weeks] for o in LOGISTICS_OWNERS}
+    def back(w, n):
+        y, k = int(w[:4]), int(w[-2:])
+        monday = dt.date.fromisocalendar(y, k, 1) - dt.timedelta(weeks=n)
+        return iso_week(monday)
+    out = {}
+    for o in LOGISTICS_OWNERS:
+        pts = []
+        for w in weeks:
+            span = [back(w, n) for n in range(OWNER_ROLLING_WEEKS)]
+            c = sum(cr.get((o, x), 0) for x in span)
+            i = sum(inv.get((o, x), 0) for x in span)
+            pts.append({"week": w, "credits": c, "invoices": i, "pct": pct(c, i)})
+        out[o] = pts
+    return out
 
 
 def closeout_share(rows, closeout_orders, po_to_order, since=CLOSEOUT_FROM):
@@ -281,7 +297,10 @@ def main(tl=None, graph=None, econ=None, today=None):
         try:
             c["closeout"] = closeout_share(rows, closeout_orders(), po_orders(tl))
         except Exception as e:
-            print(f"closeout share failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            print(f"closeout share failed: {type(e).__name__}: {e}", flush=True)
+            c["closeout_error"] = f"{type(e).__name__}: {e}"[:200]
         payload["credit"] = c
 
     h.section("otif", otif)

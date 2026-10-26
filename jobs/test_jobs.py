@@ -445,9 +445,13 @@ def test_credit_split_by_logistics_owner():
             {"customer_number": "1308", "date": "2026-10-20", "internal": False},
             {"customer_number": "9999", "date": "2026-10-13", "internal": False}]
     w = nightly.owner_weekly(window, rows, owners, ["2026-W42", "2026-W43"])
+    # rolling 4 weeks: W43 includes W42
     assert w["Frederikke"][0] == {"week": "2026-W42", "credits": 1, "invoices": 2, "pct": 50.0}
-    assert w["Valentina"][0]["pct"] == 0.0 and w["Andreas"][0]["pct"] == 0.0 and w["Andreas"][1]["pct"] == 100.0
-    assert w["Valentina"][1] == {"week": "2026-W43", "credits": 0, "invoices": 0, "pct": None}
+    assert w["Frederikke"][1] == {"week": "2026-W43", "credits": 1, "invoices": 2, "pct": 50.0}
+    assert w["Andreas"][0]["pct"] == 0.0 and w["Andreas"][1] == {"week": "2026-W43", "credits": 1, "invoices": 2, "pct": 50.0}
+    assert w["Valentina"][1] == {"week": "2026-W43", "credits": 0, "invoices": 1, "pct": 0.0}    # no gap after a quiet week
+    w = nightly.owner_weekly(window, rows, owners, ["2026-W47"])                                     # 4 weeks later: W42/43 dropped
+    assert w["Frederikke"][0]["invoices"] == 0 and w["Frederikke"][0]["pct"] is None
 
 def test_closeout_share_since_week_41():
     # real (credit notes 5-20 Oct): none of their orders went through order-closeout -> 100%
