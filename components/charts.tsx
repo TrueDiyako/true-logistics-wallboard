@@ -7,12 +7,14 @@ const weekLabel = (w: string) => (w.includes("-W") ? "W" + w.split("-W")[1] : w)
 export type Series = { name: string; values: (number | null)[]; color: string; width?: number };
 
 // default: 0-100 %; with `count` the axis runs 0..(a round max above the data) without "%"
-export function LineChart({ labels, series, height = H0, count = false }:
-  { labels: string[]; series: Series[]; height?: number; count?: boolean }) {
+export function LineChart({ labels, series, height = H0, count = false, fitPct = false }:
+  { labels: string[]; series: Series[]; height?: number; count?: boolean; fitPct?: boolean }) {
   const H = height;
   const dataMax = Math.max(1, ...series.flatMap((s) => s.values.filter((v) => v != null) as number[]));
   const step = count ? Math.max(1, Math.ceil(dataMax / 4 / (dataMax > 20 ? 5 : 1)) * (dataMax > 20 ? 5 : 1)) : 25;
-  const top = count ? step * 4 : 100;
+  // fitPct: a % axis that ends just above the data (10, 20, 25, 50 or 100%) so small shares stay readable
+  const fit = [10, 20, 25, 50, 100].find((t) => t >= dataMax * 1.15) ?? 100;
+  const top = count ? step * 4 : fitPct ? fit : 100;
   const unit = count ? "" : "%";
   // end-of-line labels: keep at least GAP apart so values like 48% / 44% never overlap
   const GAP = 30;

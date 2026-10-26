@@ -143,3 +143,12 @@ header .title { flex: 0 1 auto; white-space: nowrap; }
 .prodwrap .ptable { flex: 1 1 0; min-height: 0; grid-template-rows: minmax(0, 1fr); }
 .prodwrap .pcol { min-height: 0; height: 100%; overflow: hidden; }
 .prodwrap .pcol > .run, .prodwrap .pcol > h3 { flex-shrink: 0; }
+
+.headlines .clickable { cursor: pointer; }
+.headlines .clickable b { text-decoration: underline dotted; text-underline-offset: .4rem; }
+.overlay { position: fixed; inset: 0; background: rgba(40, 32, 24, .45); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.overlaybox { background: var(--panel); border-radius: .8vw; padding: 2vh 1.5vw; width: min(1200px, 90vw); max-height: 85vh; overflow: auto; }
+.overlayhead { display: flex; align-items: baseline; gap: 1vw; margin-bottom: 1vh; }
+.overlayhead b { font-size: 1.4rem; }
+.overlayhead span { color: var(--muted); flex: 1; }
+.overlayhead button { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--panel-2); border-radius: 1vw; padding: .3vh 1vw; }

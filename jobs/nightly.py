@@ -132,6 +132,9 @@ def response_payload(rows, today=None, tracelink_refs=None):
 
 # ----------------------------- credit notes --------------------------------
 LOGISTICS_OWNERS = ["Valentina", "Frederikke", "Andreas"]
+NO_OWNER = "No owner"
+# customers the e-mail domain can't link (no e-mail in e-conomic, or another domain): {customer no.: owner}
+OWNER_BY_CUSTOMER = {}
 CLOSEOUT_FROM = "2026-10-05"     # week 41: order-closeout skill share counts credit notes from here
 
 
@@ -142,21 +145,21 @@ def customer_owners(econ):
     while url:
         res = econ._get(url)
         for c in res.get("collection", []):
-            owner = rx.owner_of(str(c.get("email") or "").strip().lower()).get("responsible", "")
-            if owner:
+            owner = OWNER_BY_CUSTOMER.get(str(c["customerNumber"])) or \
+                rx.owner_of(str(c.get("email") or "").strip().lower()).get("responsible", "")
+            if owner in LOGISTICS_OWNERS:
                 out[str(c["customerNumber"])] = owner
         url = (res.get("pagination") or {}).get("nextPage")
     return out
 
 
-OWNER_ROLLING_WEEKS = 4         # each point = credits / invoices over the last 4 weeks (smooths small counts)
+OWNER_ROLLING_WEEKS = 1         # week by week: that week's credit notes / that week's invoices
 
 
 def owner_weekly(window, rows, owners, weeks):
-    """Per logistics owner and week: credit notes on their customers / ALL invoices (non-internal),
-    summed over the last OWNER_ROLLING_WEEKS weeks. Each line is that person's share of the overall
-    credit rate, so the lines (plus customers without an owner) add up to the total - not a personal
-    rate that depends on how many invoices their customers get."""
+    """Per logistics owner and week: credit notes on their customers that week / ALL invoices that
+    week (non-internal). The lines, plus "No owner", add up to the week's total credit rate - the
+    same weekly figure as the single line before, split across the three people."""
     inv, cr = {}, {}
     for i in window:
         if float(i.get("netAmount", 0)) <= 0:
@@ -168,16 +171,16 @@ def owner_weekly(window, rows, owners, weeks):
         inv[k] = inv.get(k, 0) + 1                       # all invoices, whoever owns the customer
     for r in rows:
         c = str(r.get("customer_number", ""))
-        if r.get("internal") or c not in owners:
+        if r.get("internal"):
             continue
-        k = (owners[c], iso_week(dt.date.fromisoformat(str(r["date"])[:10])))
-        cr[k] = cr.get(k, 0) + 1
+        k = (owners.get(c, NO_OWNER), iso_week(dt.date.fromisoformat(str(r["date"])[:10])))
+        cr[k] = cr.get(k, 0) + 1                         # customers without an owner: their own line
     def back(w, n):
         y, k = int(w[:4]), int(w[-2:])
         monday = dt.date.fromisocalendar(y, k, 1) - dt.timedelta(weeks=n)
         return iso_week(monday)
     out = {}
-    for o in LOGISTICS_OWNERS:
+    for o in LOGISTICS_OWNERS + [NO_OWNER]:
         pts = []
         for w in weeks:
             span = [back(w, n) for n in range(OWNER_ROLLING_WEEKS)]
@@ -201,8 +204,10 @@ def closeout_share(rows, closeout_orders, po_to_order, since=CLOSEOUT_FROM):
             orders |= set(hit) if isinstance(hit, (set, list, tuple)) else {hit}
         if not orders:
             unknown += 1
-        out.append({"credit_note": r["credit_note"], "orders": sorted(orders),
+        out.append({"credit_note": r["credit_note"], "date": str(r["date"])[:10], "customer": r.get("customer", ""),
+                    "po": str(r.get("heading") or ""), "orders": sorted(orders),
                     "closeout": bool(orders & closeout_orders)})
+    out.sort(key=lambda x: (x["closeout"], x["date"]))
     n = len(out)
     not_used = sum(1 for x in out if not x["closeout"])
     return {"since": since, "credit_notes": n, "without_closeout": not_used, "no_order_found": unknown,

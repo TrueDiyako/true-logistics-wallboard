@@ -437,6 +437,11 @@ def test_credit_split_by_logistics_owner():
                                    {"customerNumber": 9999, "email": "someone@unknown-customer.xyz"}], "pagination": {}}
     owners = nightly.customer_owners(Econ())
     assert owners == {"1175": "Frederikke", "1347": "Valentina", "1308": "Andreas"}
+    nightly.OWNER_BY_CUSTOMER["9999"] = "Andreas"                     # e.g. Matsmart: no e-mail in e-conomic
+    try:
+        assert nightly.customer_owners(Econ())["9999"] == "Andreas"
+    finally:
+        nightly.OWNER_BY_CUSTOMER.clear()
     I = lambda n, c, day, amt: {"bookedInvoiceNumber": n, "customer": {"customerNumber": c}, "date": day, "netAmount": amt}
     window = [I(1, 1175, "2026-10-13", 100), I(2, 1175, "2026-10-14", 100), I(3, 1347, "2026-10-13", 100),
               I(4, 1308, "2026-10-13", 100), I(5, 1308, "2026-10-20", 100), I(6, 9999, "2026-10-13", 100),
@@ -445,16 +450,13 @@ def test_credit_split_by_logistics_owner():
             {"customer_number": "1308", "date": "2026-10-20", "internal": False},
             {"customer_number": "9999", "date": "2026-10-13", "internal": False}]
     w = nightly.owner_weekly(window, rows, owners, ["2026-W42", "2026-W43"])
-    # denominator = ALL non-internal invoices (6 in W42 incl. the customer without an owner, +1 in W43)
+    # week by week, denominator = ALL non-internal invoices of that week (W42: 5, W43: 1)
     assert w["Frederikke"][0] == {"week": "2026-W42", "credits": 1, "invoices": 5, "pct": 20.0}
-    assert w["Frederikke"][1] == {"week": "2026-W43", "credits": 1, "invoices": 6, "pct": 16.7}   # rolling 4 weeks
-    assert w["Andreas"][1] == {"week": "2026-W43", "credits": 1, "invoices": 6, "pct": 16.7}
-    assert w["Valentina"][1]["pct"] == 0.0
-    # the lines plus the unowned customer add up to the overall rate (W42: 2 credit notes of 5 invoices)
-    unowned = 1
-    assert round(sum(w[o][0]["credits"] for o in w) + unowned, 1) == 2
-    w = nightly.owner_weekly(window, rows, owners, ["2026-W47"])                                     # 4 weeks later
-    assert w["Frederikke"][0]["invoices"] == 0 and w["Frederikke"][0]["pct"] is None
+    assert w["Frederikke"][1] == {"week": "2026-W43", "credits": 0, "invoices": 1, "pct": 0.0}     # not rolling
+    assert w["Andreas"][1] == {"week": "2026-W43", "credits": 1, "invoices": 1, "pct": 100.0}
+    assert w["No owner"][0] == {"week": "2026-W42", "credits": 1, "invoices": 5, "pct": 20.0}
+    # the lines add up to the week's total: W42 2 credit notes / 5 invoices = 40%, W43 1 / 1 = 100%
+    assert round(sum(w[o][0]["pct"] for o in w), 1) == 40.0 and round(sum(w[o][1]["pct"] for o in w), 1) == 100.0
 
 def test_closeout_share_since_week_41():
     # real (credit notes 5-20 Oct): none of their orders went through order-closeout -> 100%

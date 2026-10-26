@@ -37,11 +37,13 @@ function Missing() {
   return <div className="missing">Waiting for first data run</div>;
 }
 
-function Headlines({ items }: { items: { label: string; value: string; color?: string }[] }) {
+function Headlines({ items }: { items: { label: string; value: string; color?: string; onClick?: () => void }[] }) {
   return (
     <div className="headlines">
       {items.map((i) => (
-        <div key={i.label}><b style={{ color: i.color }}>{i.value}</b><span>{i.label}</span></div>
+        <div key={i.label} className={i.onClick ? "clickable" : ""} onClick={i.onClick}
+             title={i.onClick ? "Click for the list" : undefined}>
+          <b style={{ color: i.color }}>{i.value}</b><span>{i.label}</span></div>
       ))}
     </div>
   );
@@ -142,34 +144,68 @@ const responsePanel: PanelFn = ({ kpi }) => {
   );
 };
 
-const OWNER_COLORS: Record<string, string> = { Valentina: "#4F7A80", Frederikke: "#C9922E", Andreas: "#8C5B3E" };
-const creditPanel: PanelFn = ({ kpi }) => {
-  const c = kpi?.credit;
-  if (!c) return <Panel title="Credit notes"><Missing /></Panel>;
+const OWNER_COLORS: Record<string, string> = {
+  Valentina: "#4F7A80", Frederikke: "#C9922E", Andreas: "#8C5B3E", "No owner": "#A8A29A" };
+
+// the credit notes behind the "not closed out" figure; opens on click (browser), closes on click
+function CloseoutList({ co, onClose }: { co: any; onClose: () => void }) {
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="overlaybox" onClick={(e) => e.stopPropagation()}>
+        <div className="overlayhead"><b>Credit notes since week 41</b>
+          <span>{co.without_closeout} of {co.credit_notes} on orders not closed out with the order-closeout skill</span>
+          <button onClick={onClose}>Close</button></div>
+        <table className="table">
+          <thead><tr><th>Credit note</th><th>Date</th><th>Customer</th><th>Customer order</th><th>TraceLink order</th><th>Order closeout</th></tr></thead>
+          <tbody>
+            {(co.detail || []).map((r: any) => (
+              <tr key={r.credit_note}>
+                <td>{r.credit_note}</td><td>{r.date ? day(r.date) : ""}</td><td>{r.customer}</td><td className="po">{r.po}</td>
+                <td>{(r.orders || []).join(", ") || "not found"}</td>
+                <td className={r.closeout ? "good" : "bad"}>{r.closeout ? "used" : "not used"}</td>
+              </tr>))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function CreditPanel({ c }: { c: any }) {
+  const [open, setOpen] = useState(false);
   const w = c.weekly || [];
   const by = c.by_owner || null;
   const co = c.closeout;
-  const items: any[] = [{ label: `${c.headline.credits} of ${c.headline.invoices} invoices, 13 weeks`,
+  const items: any[] = [{ label: `${c.headline.credits} of ${c.headline.invoices} invoices credited, last 13 weeks`,
                           value: pct(c.headline.credit_pct), color: C.credit }];
   if (co)
-    items.push({ label: co.credit_notes ? `of ${co.credit_notes} credit notes since W41 without order closeout`
-                                        : "no credit notes since W41",
-                 value: co.credit_notes ? pct(co.pct_without_closeout) : "–", color: C.noReply });
+    items.push({ label: co.credit_notes
+                   ? `${co.without_closeout} of ${co.credit_notes} credit notes since week 41 were on orders not closed out with the order-closeout skill`
+                   : "no credit notes since week 41",
+                 value: co.credit_notes ? pct(co.pct_without_closeout) : "–", color: C.noReply,
+                 onClick: co.credit_notes ? () => setOpen(true) : undefined });
   else if (by || c.closeout_error)
-    items.push({ label: c.closeout_error ? `without order closeout: failed – ${c.closeout_error}`
-                                         : "without order closeout: not calculated yet (next nightly run)",
+    items.push({ label: c.closeout_error ? `order-closeout share failed – ${c.closeout_error}`
+                                         : "order-closeout share: not calculated yet (next nightly run)",
                  value: "–", color: C.noReply });
+  const owners = by ? Object.keys(OWNER_COLORS).filter((o) => by[o] && by[o].some((x: any) => x.pct)) : [];
   const series = by
-    ? Object.keys(OWNER_COLORS).filter((o) => by[o]).map((o) => ({ name: o, values: by[o].map((x: any) => x.pct),
-                                                                   color: OWNER_COLORS[o], width: 4 }))
+    ? owners.map((o) => ({ name: o, values: by[o].map((x: any) => x.pct), color: OWNER_COLORS[o], width: 4 }))
     : [{ name: "Credited", values: w.map((x: any) => x.pct), color: C.credit, width: 7 }];
   return (
-    <Panel title="Credit notes" note={by ? "% of invoices credited · lines: each owner's share of all invoices, last 4 weeks rolling" : "% of invoices credited"}>
+    <Panel title="Credit notes" note={by ? "% of invoices credited per week · split per owner · lines add up to the week's total" : "% of invoices credited"}>
       <Headlines items={items} />
-      <LineChart labels={w.map((x: any) => x.week)} series={series} />
-      {by && <Legend items={Object.keys(OWNER_COLORS).filter((o) => by[o]).map((o) => ({ label: o, color: OWNER_COLORS[o] }))} />}
+      <LineChart labels={w.map((x: any) => x.week)} series={series} fitPct={!!by} />
+      {by && <Legend items={owners.map((o) => ({ label: o, color: OWNER_COLORS[o] }))} />}
+      {open && co && <CloseoutList co={co} onClose={() => setOpen(false)} />}
     </Panel>
   );
+}
+
+const creditPanel: PanelFn = ({ kpi }) => {
+  const c = kpi?.credit;
+  if (!c) return <Panel title="Credit notes"><Missing /></Panel>;
+  return <CreditPanel c={c} />;
 };
 
 // ---------------- dashboard 2: action now ----------------
