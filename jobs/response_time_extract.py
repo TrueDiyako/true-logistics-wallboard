@@ -114,6 +114,16 @@ SAME_COMPANY_BH = 8
 # Replies the job cannot see (sent with "Reply" instead of "Reply all", so order@ was left
 # out and the customer never wrote back). Checked by hand in the sender's Outlook.
 # (customer address, subject, reply time Copenhagen "YYYY-MM-DD HH:MM", who replied)
+# emails removed by hand on the dashboard ("x"): {dismiss_key: {"at": ISO time}}. Set by the jobs
+# from Redis before run(); a removed email counts as answered at the moment it was removed.
+DISMISSED = {}
+
+
+def dismiss_key(customer, received_utc):
+    """Stable id of a waiting email: sender + minute received (UTC). The dashboard sends this back."""
+    return f"{str(customer).lower()}|{received_utc.strftime('%Y-%m-%dT%H:%M')}"
+
+
 MANUAL_REPLIES = [
     ("varga.martin@prezentex.hu", "192026 Lidl", "2026-10-15 11:41", "frederikke@truecompany.com"),
 ]
@@ -689,6 +699,19 @@ def build_waits(messages, now_utc, body_of=None):
                     and norm_subject(w["subject"]) == norm_subject(subj) and w["received"] < utc):
                 w.update(replied=utc, replied_by=who, outside=True, via="confirmed by hand (Reply instead of Reply all)")
 
+    # removed by hand on the dashboard: answered at the moment of the click
+    for w in waits:
+        hit = DISMISSED.get(dismiss_key(w["customer"], w["received"])) if w["replied"] is None else None
+        if hit is not None:
+            try:
+                at = dt.datetime.fromisoformat(str(hit.get("at", "")).replace("Z", "+00:00"))
+            except ValueError:
+                at = now_utc
+            if at.tzinfo is None:
+                at = at.replace(tzinfo=dt.timezone.utc)
+            w.update(replied=max(at, w["received"]), replied_by="removed on dashboard",
+                     via="removed on dashboard (reply not found)")
+
     rows = []
     for w in waits:
         end = w["replied"] or now_utc
@@ -712,6 +735,7 @@ def build_waits(messages, now_utc, body_of=None):
             "calendar_hours": round((end - w["received"]).total_seconds() / 3600, 2),
             "chasers_before_reply": w["chasers"],
             "conversation_id": w["conversation_id"],
+            "dismiss_key": dismiss_key(w["customer"], w["received"]),
         })
     rows.sort(key=lambda r: r["received_local"])
     return rows, uniq

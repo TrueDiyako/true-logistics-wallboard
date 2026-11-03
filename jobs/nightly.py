@@ -41,18 +41,50 @@ def pct(n, d):
 
 
 # ----------------------------- OTIF / short picks --------------------------
+def volume_of(o):
+    """Cases for the volume OTIF: ordered cases, cases delivered (per flavour, capped at what was
+    ordered, label variants of a flavour combined, bags converted - otif_extract's filled_units;
+    an order that hasn't shipped has delivered nothing), and whether the order was on time."""
+    ordered = float(o.get("ordered_units") or 0)
+    delivered = min(float(o.get("filled_units") or 0), ordered) if o.get("state") == "Shipped" else 0.0
+    return ordered, delivered
+
+
+def volume_figures(orders):
+    """On a volume basis (cases):
+    on time = cases on on-time orders / cases ordered        (orders with an on-time verdict)
+    in full = cases delivered / cases ordered                 (shipped or overdue orders)
+    OTIF    = cases delivered on on-time orders / cases ordered (orders with an on-time verdict)"""
+    t_ord = t_ontime = t_otif = f_ord = f_del = 0.0
+    for o in orders:
+        ordered, delivered = volume_of(o)
+        if o["on_time"] is not None:
+            t_ord += ordered
+            if o["on_time"] is True:
+                t_ontime += ordered
+                t_otif += delivered
+        if ox._filled_base(o):
+            f_ord += ordered
+            f_del += delivered
+    return {"otif_pct": pct(t_otif, t_ord), "on_time_pct": pct(t_ontime, t_ord),
+            "in_full_pct": pct(f_del, f_ord), "ordered_cases": round(t_ord), "delivered_cases": round(f_del)}
+
+
 def otif_payload(orders, today=None):
+    """OTIF on a volume basis (cases), per ISO week of the requested date - see volume_figures.
+    The order-based figures stay in the payload as *_orders_pct for reference."""
     timed = [o for o in orders if o["on_time"] is not None]
     filled = [o for o in orders if ox._filled_base(o)]
-    weekly = ox.weekly_series(orders)
+    by_week = {}
+    for o in orders:
+        by_week.setdefault(iso_week(o["requested_date"]), []).append(o)
+    weekly = [{"week": w, "orders": len(v), **volume_figures(v)} for w, v in sorted(by_week.items())]
     if today:
         weekly = complete_weeks(weekly, today)
-    head = {
-        "otif_pct": pct(sum(o["otif"] is True for o in timed), len(timed)),
-        "on_time_pct": pct(sum(o["on_time"] is True for o in timed), len(timed)),
-        "in_full_pct": pct(sum(o["in_full"] is True for o in filled), len(filled)),
-        "orders": len(orders),
-    }
+    head = {**volume_figures(orders), "orders": len(orders), "basis": "volume",
+            "otif_orders_pct": pct(sum(o["otif"] is True for o in timed), len(timed)),
+            "on_time_orders_pct": pct(sum(o["on_time"] is True for o in timed), len(timed)),
+            "in_full_orders_pct": pct(sum(o["in_full"] is True for o in filled), len(filled))}
     return {"headline": head,
             "weekly": [{k: w[k] for k in ("week", "otif_pct", "on_time_pct", "in_full_pct", "orders")}
                        for w in weekly]}
@@ -298,6 +330,11 @@ def main(tl=None, graph=None, econ=None, today=None):
     def response():
         rx.DATE_FROM, rx.DATE_TO = since, None
         rx.OUTPUT_DIR = os.path.join(work, "resp")
+        try:
+            rx.DISMISSED = common.redis_hgetall(common.DISMISSED_KEY)   # removed by hand: answered at the click
+        except Exception as e:
+            print(f"dismissed emails not read: {e}", flush=True)
+            rx.DISMISSED = {}
         rows, _ = rx.run(graph or rx.Graph())
         payload["response"] = response_payload(rows, today, refs)
 

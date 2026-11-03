@@ -314,6 +314,22 @@ def test_manual_reply_override_prezentex_lidl():
     assert lidl["replied_via"].startswith("confirmed by hand") and lidl["replied_by"] == "frederikke@truecompany.com"
     assert not w["182026"]["answered"]                       # only the listed email is overridden
 
+def test_removed_on_dashboard_counts_as_answered_at_the_click():
+    # real case: Salling "Spot uge 51" waiting 2 days on 3 Nov; removed by hand on the dashboard
+    m = M("s51", "spot@sallinggroup.com", "2026-10-30T09:15:20Z", "Spot uge 51 / slettet", to=["order@truecompany.com"])
+    other = M("mc", "orders@mycare.dk", "2026-10-30T10:00:00Z", "Order IN0045875", to=["order@truecompany.com"])
+    key = rx.dismiss_key("spot@sallinggroup.com", rx.dt.datetime(2026, 10, 30, 9, 15, 20, tzinfo=rx.dt.timezone.utc))
+    assert key == "spot@sallinggroup.com|2026-10-30T09:15"
+    rx.DISMISSED = {key: {"at": "2026-11-03T10:20:00Z"}}
+    try:
+        w = {x["subject"]: x for x in waits([m, other])}
+    finally:
+        rx.DISMISSED = {}
+    s = w["Spot uge 51 / slettet"]
+    assert s["answered"] and s["replied_local"] == "2026-11-03 11:20" and s["replied_via"].startswith("removed on dashboard")
+    assert s["dismiss_key"] == key
+    assert not w["Order IN0045875"]["answered"]                         # only the removed one
+
 def test_reg_domain():
     assert rx.reg_domain("purchase@mg.firtal.com") == "firtal.com"
     assert rx.reg_domain("a@stiller.co.uk") == "stiller.co.uk"

@@ -85,6 +85,27 @@ def redis_get(key):
     return json.loads(res) if res else None
 
 
+DISMISSED_KEY = "lk:dismissed"     # emails removed by hand on the dashboard (hash: email key -> JSON)
+
+
+def redis_hgetall(key):
+    """HGETALL key -> {field: parsed JSON value} ({} if missing or no credentials)."""
+    if not REDIS_URL:
+        return {}
+    body = json.dumps(["HGETALL", key]).encode()
+    req = urllib.request.Request(REDIS_URL, data=body, method="POST", headers={
+        "Authorization": f"Bearer {REDIS_TOKEN}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        flat = json.loads(r.read()).get("result") or []
+    out = {}
+    for i in range(0, len(flat) - 1, 2):
+        try:
+            out[flat[i]] = json.loads(flat[i + 1])
+        except (TypeError, ValueError):
+            out[flat[i]] = {}
+    return out
+
+
 def keep_previous(payload, key, sections):
     """A failed section keeps yesterday's data instead of blanking the TV."""
     missing = [s for s in sections if s not in payload]

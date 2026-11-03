@@ -202,3 +202,16 @@ with, or its heading (customer PO) looked up in TraceLink. Nightly job; needs GO
 The site is only rebuilt when something outside `jobs/` changed since the LAST DEPLOYED commit
 (Vercel's VERCEL_GIT_PREVIOUS_SHA); if that commit is unknown it always builds. (Until 26 Oct the
 rule compared with the previous commit only, so a merge commit could skip page changes.)
+
+## OTIF on volume (dashboard 1)
+Since 3 Nov 2026 the OTIF panel is on a volume basis (cases), per week of the requested date:
+in full = cases delivered / cases ordered (per flavour, capped at what was ordered, label variants of
+a flavour combined, bags -> cases; an order that hasn't shipped has delivered 0); on time = cases on
+on-time orders / cases ordered; OTIF = cases delivered on on-time orders / cases ordered. The
+order-based figures stay in the payload as *_orders_pct.
+
+## Removing a waiting email by hand (dashboard 2)
+The "x" on "Emails waiting over 1 day" stores the email's key (sender|minute received, UTC) in the
+Redis hash lk:dismissed via /api/dismiss (POST; DELETE = Undo, offered for 10 seconds). The page hides
+it at once; the jobs count it as answered at the moment of the click (replied_via "removed on
+dashboard"). Anyone with the dashboard link can do this, also on the TV.

@@ -20,12 +20,26 @@ export async function GET() {
     });
     const body = await res.json();
     const vals: (string | null)[] = body.result || [];
+    // emails removed by hand: the page hides them at once, before the next job run
+    let dismissed: string[] = [];
+    try {
+      const d = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(["HKEYS", "lk:dismissed"]),
+        cache: "no-store",
+      });
+      dismissed = (await d.json()).result || [];
+    } catch {
+      dismissed = [];
+    }
     const parse = (v: string | null) => (v ? JSON.parse(v) : null);
     return NextResponse.json(
       {
         kpi: parse(vals[0]),
         live: parse(vals[1]),
         health: { nightly: parse(vals[2]), live: parse(vals[3]) },
+        dismissed,
         served_at: new Date().toISOString(),
       },
       { headers: { "Cache-Control": "no-store" } }

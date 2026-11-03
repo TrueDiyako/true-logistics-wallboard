@@ -554,6 +554,36 @@ def test_biggest_only_the_top_15():
     s = live.biggest_summary(orders, values, rows, dt.date(2026, 10, 26))
     assert s["top_orders"] == 15 and s["booked"] == 1 and s["open_orders"] == 40
 
+def test_otif_on_volume():
+    import datetime as _d
+    R = lambda n, state, on_time, basis, ordered, filled, day="2026-10-13": {
+        "order_number": n, "state": state, "on_time": on_time, "on_time_basis": basis, "otif": False,
+        "in_full": filled >= ordered, "ordered_units": ordered, "filled_units": filled,
+        "requested_date": _d.date.fromisoformat(day)}
+    orders = [R("A", "Shipped", True, "shipped, date kept", 100, 100),     # on time, in full
+              R("B", "Shipped", True, "shipped, date kept", 300, 240),     # on time, 60 cases short
+              R("C", "Shipped", False, "re-dated later", 100, 100),        # late, in full
+              R("D", "Pakning", False, "overdue, not shipped", 50, 50),    # overdue: picked but not shipped = 0 delivered
+              R("E", "Pakning", None, "not yet due", 999, 0)]              # not yet due: not counted
+    orders[0]["otif"] = True
+    v = nightly.volume_figures(orders)
+    # ordered (with a verdict) = 100+300+100+50 = 550
+    assert v["on_time_pct"] == round(100 * 400 / 550, 1)                   # A + B ordered
+    assert v["otif_pct"] == round(100 * (100 + 240) / 550, 1)              # delivered on on-time orders
+    assert v["in_full_pct"] == round(100 * (100 + 240 + 100 + 0) / 550, 1) # D delivered nothing yet
+    p = nightly.otif_payload(orders)
+    assert p["headline"]["basis"] == "volume" and p["headline"]["otif_pct"] == v["otif_pct"]
+    assert p["headline"]["otif_orders_pct"] == 25.0                        # order-based kept for reference (1 of 4)
+    assert p["weekly"][0]["week"] == "2026-W42" and p["weekly"][0]["in_full_pct"] == v["in_full_pct"]
+
+def test_removed_email_leaves_the_waiting_list_and_carries_its_key():
+    base = {"in_kpi": True, "business_hours": 20.0, "received_local": "2026-10-30 10:15", "customer": "a@b.dk",
+            "customer_domain": "b.dk", "subject": "Order 1", "owner": "Frederikke", "owner_customer": "B"}
+    rows = [dict(base, answered=False, dismiss_key="a@b.dk|2026-10-30T09:15"),
+            dict(base, answered=True, dismiss_key="c@d.dk|2026-10-30T09:16")]   # removed = answered by the job
+    out = live.build_emails(rows)
+    assert len(out) == 1 and out[0]["key"] == "a@b.dk|2026-10-30T09:15"
+
 def test_cph_now_is_naive_local():
     n = common.cph_now()
     assert n.tzinfo is None

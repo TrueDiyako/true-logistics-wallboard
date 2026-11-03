@@ -158,3 +158,12 @@ header .title { flex: 0 1 auto; white-space: nowrap; }
 .table td.one { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 22vw; }
 .table td.po.one { max-width: 16vw; }
 .fitmore { padding: .6vh .5vw; }
+
+/* "x" on waiting emails, and the Undo bar */
+.xbtn { font: inherit; font-size: 1.2rem; line-height: 1; cursor: pointer; border: 1px solid var(--border);
+  background: var(--panel-2); color: var(--muted); border-radius: 50%; width: 1.7rem; height: 1.7rem; margin-left: .5vw; flex: none; }
+.xbtn:hover { color: var(--bad); border-color: var(--bad); }
+.undo { display: flex; align-items: center; gap: 1vw; margin-top: 1vh; padding: .8vh 1vw; border-radius: .5vw;
+  background: var(--panel-2); border: 1px solid var(--border); font-size: .95rem; }
+.undo span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.undo button { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--panel); border-radius: 1vw; padding: .3vh 1vw; font-weight: 600; }

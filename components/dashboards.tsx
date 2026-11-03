@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { LineChart, HBar, Legend } from "./charts";
 import { fmtDay, fmtDayNum, fmtDayMonth, fmtDayMonthLong, fmtNum, fmtOneDecimal } from "@/lib/fmt";
 
-export type Data = { kpi: any; live: any; health: any };
+export type Data = { kpi: any; live: any; health: any; dismissed?: string[] };
 type PanelFn = (d: Data) => React.ReactNode;
 
 // natural, warm, earthy palette (olive, ochre, clay, terracotta, umber)
@@ -65,7 +65,7 @@ const otifPanel: PanelFn = ({ kpi }) => {
   if (!o) return <Panel title="On time in full"><Missing /></Panel>;
   const w = o.weekly || [];
   return (
-    <Panel title="On time in full" note="% of orders · last 13 weeks">
+    <Panel title="On time in full" note={o.headline.basis === "volume" ? "% of cases ordered · last 13 weeks" : "% of orders · last 13 weeks"}>
       <Headlines items={[
         { label: "OTIF", value: pct(o.headline.otif_pct), color: C.otif },
         { label: "On time", value: pct(o.headline.on_time_pct), color: C.onTime },
@@ -200,21 +200,53 @@ const creditPanel: PanelFn = ({ kpi }) => {
 };
 
 // ---------------- dashboard 2: action now ----------------
-const emailsPanel: PanelFn = ({ live }) => {
-  const rows = live?.emails_waiting;
-  if (!rows) return <Panel title="Emails waiting over 1 day"><Missing /></Panel>;
+// "x" removes an email from the list (for replies the job couldn't see); "Undo" for 10 seconds.
+// Stored in Redis (lk:dismissed); the jobs then count it as answered at the moment of the click.
+function EmailsWaiting({ rows, dismissed }: { rows: any[]; dismissed: string[] }) {
+  const [gone, setGone] = useState<string[]>([]);
+  const [undo, setUndo] = useState<{ key: string; label: string } | null>(null);
+  const timer = React.useRef<any>(null);
+  const hidden = new Set([...(dismissed || []), ...gone]);
+  const shown = rows.filter((r: any) => !r.key || !hidden.has(r.key));
+  const send = (method: "POST" | "DELETE", key: string) =>
+    fetch("/api/dismiss", { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) });
+  const remove = (r: any) => {
+    setGone((g) => [...g, r.key]);
+    setUndo({ key: r.key, label: `${r.company} · ${r.subject}` });
+    window.dispatchEvent(new Event("wallboard:interact"));
+    send("POST", r.key).catch(() => setGone((g) => g.filter((k) => k !== r.key)));
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setUndo(null), 10000);
+  };
+  const restore = () => {
+    if (!undo) return;
+    const k = undo.key;
+    setGone((g) => g.filter((x) => x !== k));
+    setUndo(null);
+    clearTimeout(timer.current);
+    send("DELETE", k);
+  };
   const by: Record<string, number> = {};
-  rows.forEach((r: any) => { by[r.owner || "Unassigned"] = (by[r.owner || "Unassigned"] || 0) + 1; });
+  shown.forEach((r: any) => { by[r.owner || "Unassigned"] = (by[r.owner || "Unassigned"] || 0) + 1; });
   const owners = Object.entries(by).sort((a, b) => (a[0] === "Unassigned" ? 1 : b[0] === "Unassigned" ? -1 : b[1] - a[1]));
   return (
-    <Panel title="Emails waiting over 1 day" note={`${rows.length} waiting`}>
+    <Panel title="Emails waiting over 1 day" note={`${shown.length} waiting`}>
       <div className="chips">{owners.map(([o, n]) => <span key={o} className={o === "Unassigned" ? "chip muted" : "chip"}>{o} <b>{n}</b></span>)}</div>
-      <List rows={rows} max={18} empty="No customer is waiting"
+      <List rows={shown} max={18} empty="No customer is waiting"
             render={(r) => (<><span className="owner">{r.owner || "Unassigned"}</span>
                               <span className="grow"><b>{r.company}</b> · {r.subject}</span>
-                              <span className="bad">{Math.round(r.waiting_days)} d</span></>)} />
+                              <span className="bad">{Math.round(r.waiting_days)} d</span>
+                              {r.key && <button className="xbtn" title="Remove: replied, but the dashboard didn't see it"
+                                                onClick={() => remove(r)}>×</button>}</>)} />
+      {undo && <div className="undo"><span>Removed: {undo.label}</span><button onClick={restore}>Undo</button></div>}
     </Panel>
   );
+}
+
+const emailsPanel: PanelFn = ({ live, dismissed }) => {
+  const rows = live?.emails_waiting;
+  if (!rows) return <Panel title="Emails waiting over 1 day"><Missing /></Panel>;
+  return <EmailsWaiting rows={rows} dismissed={dismissed || []} />;
 };
 
 // clicking a counter filters the list (click again = all); it also holds the rotation

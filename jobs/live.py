@@ -322,7 +322,8 @@ def build_emails(rows):
     return [{"customer": r["customer"], "domain": r["customer_domain"], "subject": r["subject"][:80],
              "company": r.get("owner_customer") or r["customer_domain"],
              "owner": r.get("owner") or "Unassigned",
-             "received": r["received_local"], "waiting_days": round(r["business_hours"] / day, 1)}
+             "received": r["received_local"], "waiting_days": round(r["business_hours"] / day, 1),
+             "key": r.get("dismiss_key", "")}
             for r in w]
 
 
@@ -371,6 +372,11 @@ def main(tl=None, econ=None, graph=None, dachser=None, today=None, plan_source=N
         rx.DATE_TO = None
         rx.OUTPUT_DIR = tempfile.mkdtemp()
         rx.MAX_BODY_READS = 80      # hourly run: keep it short (the nightly run reads up to 400)
+        try:
+            rx.DISMISSED = common.redis_hgetall(common.DISMISSED_KEY)   # removed by hand on the dashboard
+        except Exception as e:
+            print(f"dismissed emails not read: {e}", flush=True)
+            rx.DISMISSED = {}
         rows, _ = rx.run(graph or rx.Graph())
         return build_emails(rows)
     payload["emails_waiting"] = h.section("emails", emails)
