@@ -584,6 +584,22 @@ def test_removed_email_leaves_the_waiting_list_and_carries_its_key():
     out = live.build_emails(rows)
     assert len(out) == 1 and out[0]["key"] == "a@b.dk|2026-10-30T09:15"
 
+def test_credit_split_by_skill_per_week():
+    weekly = [{"week": "2026-W40", "pct": 12.0, "credits": 6, "invoices": 50},
+              {"week": "2026-W42", "pct": 15.0, "credits": 6, "invoices": 40},
+              {"week": "2026-W45", "pct": 10.0, "credits": 5, "invoices": 50}]
+    rows = [{"credit_note": 20887, "date": "2026-10-14", "internal": False},     # W42, without
+            {"credit_note": 21010, "date": "2026-11-03", "internal": False},     # W45, with the skill
+            {"credit_note": 21011, "date": "2026-11-04", "internal": False},     # W45, with the skill
+            {"credit_note": 21012, "date": "2026-11-05", "internal": True}]      # internal: not counted
+    closeout = {"detail": [{"credit_note": 20887, "closeout": False}, {"credit_note": 21010, "closeout": True},
+                           {"credit_note": 21011, "closeout": True}, {"credit_note": 21012, "closeout": True}]}
+    w = {x["week"]: x for x in nightly.split_by_skill(weekly, rows, closeout)}
+    assert w["2026-W40"]["with_skill_pct"] is None and w["2026-W40"]["without_skill_pct"] is None   # before the skill
+    assert w["2026-W42"]["with_skill"] == 0 and w["2026-W42"]["without_skill_pct"] == 15.0
+    assert w["2026-W45"]["with_skill"] == 2 and w["2026-W45"]["without_skill"] == 3
+    assert w["2026-W45"]["with_skill_pct"] == 4.0 and w["2026-W45"]["without_skill_pct"] == 6.0      # adds up to 10%
+
 def test_cph_now_is_naive_local():
     n = common.cph_now()
     assert n.tzinfo is None

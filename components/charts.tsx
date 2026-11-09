@@ -127,3 +127,83 @@ export function Legend({ items }: { items: { label: string; color: string }[] })
     </div>
   );
 }
+
+// Clustered bars: per week one bar per series, side by side; % axis fitted to the data.
+export function ClusteredBars({ labels, series, height = H0 }: { labels: string[]; series: Series[]; height?: number }) {
+  const H = height;
+  const dataMax = Math.max(1, ...series.flatMap((s) => s.values.filter((v) => v != null) as number[]));
+  const top = [10, 20, 25, 50, 100].find((t) => t >= dataMax * 1.1) ?? 100;
+  const n = Math.max(labels.length, 1);
+  const slot = (W - L - R) / n;
+  const gw = slot * 0.78, bw = gw / Math.max(series.length, 1);
+  const y = (v: number) => T + (1 - v / top) * (H - T - B);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img">
+      {[0, 1, 2, 3, 4].map((i) => i * (top / 4)).map((g) => (
+        <g key={g}>
+          <line x1={L} x2={W - R} y1={y(g)} y2={y(g)} className="grid" />
+          <text x={L - 12} y={y(g) + 8} className="axis" textAnchor="end">{g}%</text>
+        </g>
+      ))}
+      {labels.map((l, i) => (
+        <g key={l}>
+          <text x={L + slot * (i + 0.5)} y={H - 14} className="axis" textAnchor="middle">{weekLabel(l)}</text>
+          {series.map((s, si) => {
+            const v = s.values[i];
+            if (v == null) return null;
+            const x0 = L + slot * i + (slot - gw) / 2 + si * bw;
+            return <rect key={si} x={x0 + 1} y={y(v)} width={Math.max(bw - 2, 1)} height={Math.max(y(0) - y(v), 0)}
+                         rx={2} fill={s.color} />;
+          })}
+        </g>
+      ))}
+      {labels.length > 0 && series.map((s, si) => {
+        const i = labels.length - 1, v = s.values[i];
+        if (v == null) return null;
+        const x0 = L + slot * i + (slot - gw) / 2 + si * bw + bw / 2;
+        return <text key={si} x={x0} y={y(v) - 8} className="pointlabel small" fill={s.color} textAnchor="middle">{Math.round(v)}%</text>;
+      })}
+    </svg>
+  );
+}
+
+// Stacked bars on a % axis fitted to the data: per week the segments stack to the week's total.
+export type Seg = { value: number | null; color: string };
+export function StackedTotals({ labels, stacks, height = H0 }: { labels: string[]; stacks: Seg[][]; height?: number }) {
+  const H = height;
+  const totals = stacks.map((st) => st.reduce((a, s) => a + (s.value || 0), 0));
+  const dataMax = Math.max(1, ...totals);
+  const top = [10, 20, 25, 50, 100].find((t) => t >= dataMax * 1.04) ?? 100;
+  const n = Math.max(labels.length, 1);
+  const slot = (W - L - R) / n;
+  const bw = slot * 0.62;
+  const y = (v: number) => T + (1 - v / top) * (H - T - B);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img">
+      {[0, 1, 2, 3, 4].map((i) => i * (top / 4)).map((g) => (
+        <g key={g}>
+          <line x1={L} x2={W - R} y1={y(g)} y2={y(g)} className="grid" />
+          <text x={L - 12} y={y(g) + 8} className="axis" textAnchor="end">{Math.round(g * 10) / 10}%</text>
+        </g>
+      ))}
+      {labels.map((l, i) => {
+        const x0 = L + slot * i + (slot - bw) / 2;
+        let acc = 0;
+        return (
+          <g key={l}>
+            <text x={L + slot * (i + 0.5)} y={H - 14} className="axis" textAnchor="middle">{weekLabel(l)}</text>
+            {stacks[i].map((s, k) => {
+              if (!s.value) return null;
+              const y1 = y(acc + s.value), y0 = y(acc);
+              acc += s.value;
+              return <rect key={k} x={x0} y={y1} width={bw} height={Math.max(y0 - y1, 0)} fill={s.color} />;
+            })}
+            {i === labels.length - 1 && totals[i] > 0 && (
+              <text x={x0 + bw / 2} y={y(totals[i]) - 10} className="pointlabel small" textAnchor="middle" fill="currentColor">
+                {Math.round(totals[i])}%</text>)}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}

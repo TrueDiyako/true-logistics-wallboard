@@ -215,3 +215,10 @@ The "x" on "Emails waiting over 1 day" stores the email's key (sender|minute rec
 Redis hash lk:dismissed via /api/dismiss (POST; DELETE = Undo, offered for 10 seconds). The page hides
 it at once; the jobs count it as answered at the moment of the click (replied_via "removed on
 dashboard"). Anyone with the dashboard link can do this, also on the TV.
+
+## Credit notes: stacked by order-closeout skill (dashboard 1)
+One bar per week = % of invoices credited that week. From week 41 the bar is split: credit notes on
+orders closed out with the tracelink-order-closeout skill is stacked in green;
+together they make the week's total.
+Nightly job (split_by_skill), from the same credit note -> order -> closeout-log matching as the
+"not using order-closeout skill" headline.

@@ -167,3 +167,4 @@ header .title { flex: 0 1 auto; white-space: nowrap; }
   background: var(--panel-2); border: 1px solid var(--border); font-size: .95rem; }
 .undo span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .undo button { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--panel); border-radius: 1vw; padding: .3vh 1vw; font-weight: 600; }
+.chart .pointlabel.small { font-size: 22px; }

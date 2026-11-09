@@ -246,6 +246,29 @@ def closeout_share(rows, closeout_orders, po_to_order, since=CLOSEOUT_FROM):
             "pct_without_closeout": pct(not_used, n), "detail": out}
 
 
+def split_by_skill(weekly, rows, closeout):
+    """Stacked bars: per week from week 41, the credit notes on orders closed out with the
+    order-closeout skill vs. without it, each as % of that week's invoices (they add up to the
+    week's total). Weeks before the skill existed get no split (None)."""
+    used = {d["credit_note"]: d["closeout"] for d in (closeout or {}).get("detail", [])}
+    start = iso_week(dt.date.fromisoformat(CLOSEOUT_FROM))
+    with_skill = {}
+    for r in rows:
+        if r.get("internal") or not used.get(r["credit_note"]):
+            continue
+        w = iso_week(dt.date.fromisoformat(str(r["date"])[:10]))
+        with_skill[w] = with_skill.get(w, 0) + 1
+    for w in weekly:
+        if w["week"] < start:
+            w.update(with_skill=None, without_skill=None, with_skill_pct=None, without_skill_pct=None)
+            continue
+        n_with = min(with_skill.get(w["week"], 0), w["credits"])
+        n_without = w["credits"] - n_with
+        w.update(with_skill=n_with, without_skill=n_without,
+                 with_skill_pct=pct(n_with, w["invoices"]), without_skill_pct=pct(n_without, w["invoices"]))
+    return weekly
+
+
 def credit_payload(weekly, rows, today=None):
     scope = [r for r in rows if not r["internal"]]
     inv = sum(w["invoices"] for w in weekly)          # headline: the whole window
@@ -354,6 +377,7 @@ def main(tl=None, graph=None, econ=None, today=None):
             need = {r.get("heading") for r in rows if not r.get("internal") and not r.get("orders")
                     and str(r["date"])[:10] >= CLOSEOUT_FROM}
             c["closeout"] = closeout_share(rows, closeout_orders(), po_orders(tl, need))
+            c["weekly"] = split_by_skill(c["weekly"], rows, c["closeout"])
         except Exception as e:
             import traceback
             traceback.print_exc()

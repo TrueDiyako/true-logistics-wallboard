@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { LineChart, HBar, Legend } from "./charts";
+import { LineChart, HBar, Legend, StackedTotals } from "./charts";
 import { fmtDay, fmtDayNum, fmtDayMonth, fmtDayMonthLong, fmtNum, fmtOneDecimal } from "@/lib/fmt";
 
 export type Data = { kpi: any; live: any; health: any; dismissed?: string[] };
@@ -171,6 +171,8 @@ function CloseoutList({ co, onClose }: { co: any; onClose: () => void }) {
   );
 }
 
+const CLOSEOUT_COLORS = { with: "#5E6B2E", without: "#C9922E", before: "#B7AFA4" };
+
 function CreditPanel({ c }: { c: any }) {
   const [open, setOpen] = useState(false);
   const w = c.weekly || [];
@@ -183,11 +185,19 @@ function CreditPanel({ c }: { c: any }) {
   else if (c.closeout_error)
     items.push({ label: "Percentage of credit notes not using order-closeout skill (not available)",
                  value: "–", color: C.noReply });
+  // per week: red = credit notes, green = the part on orders closed out with the order-closeout skill
+  const stacks = w.map((x: any) => {
+    const withSkill = x.with_skill_pct || 0;
+    return [{ value: Math.max((x.pct || 0) - withSkill, 0), color: C.credit },
+            { value: withSkill, color: CLOSEOUT_COLORS.with }];
+  });
+  const anySkill = w.some((x: any) => (x.with_skill_pct || 0) > 0);
   return (
-    <Panel title="Credit notes" note="% of invoices credited">
+    <Panel title="Credit notes" note="% of invoices credited per week">
       <Headlines items={items} />
-      <LineChart labels={w.map((x: any) => x.week)}
-                 series={[{ name: "Credited", values: w.map((x: any) => x.pct), color: C.credit, width: 7 }]} />
+      <StackedTotals labels={w.map((x: any) => x.week)} stacks={stacks} />
+      {anySkill && <Legend items={[{ label: "Credit notes", color: C.credit },
+                                   { label: "Of which the order was closed out with the skill", color: CLOSEOUT_COLORS.with }]} />}
       {open && co && <CloseoutList co={co} onClose={() => setOpen(false)} />}
     </Panel>
   );
