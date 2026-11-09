@@ -193,6 +193,30 @@ def test_old_gum_and_mints_orders_with_the_same_bbd_are_ignored():
     a = p.fetch_actuals(TLReal(), [dt.date(2026, 10, 14)])
     assert list(a) == [("2026-10-14", "6211")] and a[("2026-10-14", "6211")]["cases"] == 6666
 
+def test_language_article_not_in_use_falls_back_to_the_multi_language_pack():
+    # real (3 Nov 2026): plan "Salty Liquorice EN/DK" -> 6305, never used; production and orders on 6005
+    activity = {"6305": (0.0, 0.0), "6005": (183983.0, 2107.0),       # TraceLink unit_total_f / unit_reserved_f
+                "6306": (35594.0, 3751.0), "6006": (216862.0, 862.0)}
+    runs = [{"line": "Bossar", "day": "2026-11-04", "flavour": "Salty Liquorice", "lang": "EN/DK", "cases": 3750,
+             "planned_cases": 3750, "sku": "6305", "status": "planned"},
+            {"line": "Laudenberg", "day": "2026-11-04", "flavour": "Sour Watermelon", "lang": "EN/DK", "cases": 1000,
+             "planned_cases": 1000, "sku": "6306", "status": "planned"}]
+    runs = p.resolve_articles(runs, activity)
+    assert runs[0]["sku"] == "6005" and runs[0]["planned_sku"] == "6305" and "multi-language" in runs[0]["article_note"]
+    assert runs[1]["sku"] == "6306" and "planned_sku" not in runs[1]          # language article in use: unchanged
+    # the 11 real orders reserved on 6005 (TraceLink, 3 Nov), 2,107 cases
+    res = [(1023154, "COOP", "2026-11-06", 189), (1023182, "COOP", "2026-11-06", 360), (1023209, "Salling", "2026-11-06", 189),
+           (1023213, "COOP", "2026-11-06", 360), (1023220, "Good Earth", "2026-11-06", 378), (1023230, "ABC", "2026-11-06", 77),
+           (1023247, "Salling", "2026-11-06", 189), (1023260, "Reitan", "2026-11-18", 39), (1023318, "Matsch mit Sahne", "2026-11-03", 1),
+           (1023321, "World of Sweets", "2026-11-05", 5), (1023348, "Lejos", "2026-11-26", 320)]
+    reservations = [{"sku": "6005", "order": str(n), "customer": c, "start": d, "cases": q} for n, c, d, q in res]
+    out = p.allocate(runs, reservations)
+    liq = [r for r in out if r["sku"] == "6005"][0]
+    assert sum(a["cases"] for a in liq["alloc"]) == 2107 and liq["free"] == 3750 - 2107 and len(liq["alloc"]) == 11
+    # back to normal by itself once 6305 is in use
+    again = p.resolve_articles([dict(runs[0], sku="6305")], dict(activity, **{"6305": (500.0, 0.0)}))
+    assert again[0]["sku"] == "6305"
+
 def test_unplanned_production_is_shown():
     out = p.build(plan_42(), [], dt.date(2026, 10, 13), {("2026-10-12", "6309"): 250})
     extra = [r for r in out["lines"]["Laudenberg"] if r.get("unplanned")]

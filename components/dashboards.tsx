@@ -98,10 +98,10 @@ const shortsPanel: PanelFn = ({ kpi }) => {
 // AI adoption: use of the three Claude skills, per week from week 42 (live job, skill logs on Drive)
 const SKILL_COLORS: Record<string, string> = {
   "tracelink-order-closeout": "#5E6B2E", "internal-purchase": "#8C5B3E", "process-weclapp-order": "#C9922E",
-  "pick-3pl-goods": "#4F7A80" };
+  "pick-3pl-goods": "#4F7A80", "production-plan-check": "#7B6A92" };
 const SKILL_LABEL: Record<string, string> = {
   "tracelink-order-closeout": "order closeouts", "internal-purchase": "internal purchases",
-  "process-weclapp-order": "weclapp orders", "pick-3pl-goods": "3PL picks" };
+  "process-weclapp-order": "weclapp orders", "pick-3pl-goods": "3PL picks", "production-plan-check": "plan checks" };
 const aiPanel: PanelFn = ({ live }) => {
   const a = live?.ai_adoption;
   if (!a) return <Panel title="AI adoption"><Missing /></Panel>;
@@ -495,6 +495,7 @@ function ProdDay({ day: d, runs }: { day: string; runs: any[] }) {
               <div className="runstate">{RUN_NOTE[r.status] || r.status}
                 {r.status === "produced" && r.planned_cases ? ` · plan ${fmtNum(r.planned_cases)}` : ""}
                 {r.unplanned ? " · not in the plan" : ""}</div>)}
+            {r.planned_sku && <div className="runstate">as {r.sku} (multi-language pack)</div>}
             {!r.sku && <div className="al nodata">Unknown article</div>}
             {r.alloc.slice(0, n).map((a: any, j: number) => (
               <div className={"al" + (a.picked ? " picked" : a.ready ? " ready" : "")} key={j}><span className="grow">{a.customer}</span>

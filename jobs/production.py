@@ -269,9 +269,42 @@ def allocate(runs, reservations, picks=None):
     return out
 
 
-def build(plan_bytes, reservations, today, actuals=None, picks=None):
+MULTI_PACK = "60"   # original multi-language pack (EN/DK/SE/NO/FI/NL/FR/DE), e.g. 6005 Salty Liquorice
+
+
+def article_activity(tl):
+    """{article: (ever in stock, reserved now)} for every True Dates article the plan can map to -
+    one TraceLink request."""
+    names = sorted({p + c for p in set(LANG_PREFIX.values()) | {MULTI_PACK} for c in FLAVOUR_CODE.values()})
+    out = {}
+    for g in tl.objects("genobj", {"name": "IN(" + ",".join(names) + ")"}, limit=200):
+        out[str(g.get("name"))] = (float(g.get("unit_total_f") or 0), float(g.get("unit_reserved_f") or 0))
+    return out
+
+
+def resolve_articles(runs, activity):
+    """A flavour that hasn't moved to its language article yet is produced as the multi-language
+    pack: if the run's article has never had stock and has no reservations, use 60xx instead
+    (3 Nov 2026: Salty Liquorice EN/DK = 6305 never used; production and 11 orders are on 6005).
+    Switches back by itself once the language article is in use."""
+    if not activity:
+        return runs
+    for r in runs:
+        sku = r.get("sku") or ""
+        if len(sku) != 4 or sku[:2] == MULTI_PACK:
+            continue
+        total, reserved = activity.get(sku, (0.0, 0.0))
+        alt = MULTI_PACK + sku[2:]
+        if total == 0 and reserved == 0 and sum(activity.get(alt, (0.0, 0.0))) > 0:
+            r["planned_sku"], r["sku"] = sku, alt
+            r["article_note"] = f"produced as {alt} (multi-language pack) - {sku} not in use yet"
+    return runs
+
+
+def build(plan_bytes, reservations, today, actuals=None, picks=None, activity=None):
     monday = today - dt.timedelta(days=today.weekday())
-    runs = apply_actuals(parse_plan(plan_bytes, monday), actuals or {}, today)
+    runs = resolve_articles(parse_plan(plan_bytes, monday), activity)
+    runs = apply_actuals(runs, actuals or {}, today)
     runs = allocate(runs, reservations, picks)
     days = [(monday + dt.timedelta(days=i)).isoformat() for i in range(7)]
     used = [d for i, d in enumerate(days) if i < 5 or any(r["day"] == d for r in runs)]

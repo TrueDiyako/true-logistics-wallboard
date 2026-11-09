@@ -17,7 +17,8 @@ import urllib.request
 import common
 
 FOLDER_ID = "1IySoDRSkBnAqzRP8R2fiLfJUuwzj4JxH"          # Internal operations / Claude logs
-SKILLS = ["tracelink-order-closeout", "internal-purchase", "process-weclapp-order", "pick-3pl-goods"]
+SKILLS = ["tracelink-order-closeout", "internal-purchase", "process-weclapp-order", "pick-3pl-goods",
+          "production-plan-check"]
 # uses that happened without a log file, added by hand: {(ISO week, skill): count}
 MANUAL_USES = {("2026-W42", "internal-purchase"): 24}     # logged by hand on 14 Oct 2026
 TRACK_FROM = dt.date(2026, 10, 5)                           # week 41 2026 (logging started in week 42)
@@ -105,7 +106,9 @@ def build(drive, today, track_from=TRACK_FROM):
     seen, unique = set(), []
     for u in uses:
         key = (u["skill"], u["ref"])
-        if u["ref"] and key in seen:
+        # only order numbers are de-duplicated; free-text references (production-plan-check:
+        # "White CZ", "order 258688") are questions - asking again later is another use
+        if u["ref"].isdigit() and key in seen:
             continue
         seen.add(key)
         unique.append(u)

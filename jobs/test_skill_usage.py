@@ -28,10 +28,10 @@ def test_weekly_counts_from_week_42():
     out = su.build(FakeDrive(FILES), dt.date(2026, 10, 21))
     assert out["connected"] and out["tracking_from"] == "2026-10-05"
     assert out["weekly"] == [
-        {"week": "2026-W41", "tracelink-order-closeout": 0, "internal-purchase": 0, "process-weclapp-order": 0, "pick-3pl-goods": 0},
-        {"week": "2026-W42", "tracelink-order-closeout": 1, "internal-purchase": 24, "process-weclapp-order": 4, "pick-3pl-goods": 1},
-        {"week": "2026-W43", "tracelink-order-closeout": 0, "internal-purchase": 1, "process-weclapp-order": 0, "pick-3pl-goods": 1}]
-    assert out["this_week"] == {"tracelink-order-closeout": 0, "internal-purchase": 1, "process-weclapp-order": 0, "pick-3pl-goods": 1}
+        {"week": "2026-W41", "tracelink-order-closeout": 0, "internal-purchase": 0, "process-weclapp-order": 0, "pick-3pl-goods": 0, "production-plan-check": 0},
+        {"week": "2026-W42", "tracelink-order-closeout": 1, "internal-purchase": 24, "process-weclapp-order": 4, "pick-3pl-goods": 1, "production-plan-check": 0},
+        {"week": "2026-W43", "tracelink-order-closeout": 0, "internal-purchase": 1, "process-weclapp-order": 0, "pick-3pl-goods": 1, "production-plan-check": 0}]
+    assert out["this_week"] == {"tracelink-order-closeout": 0, "internal-purchase": 1, "process-weclapp-order": 0, "pick-3pl-goods": 1, "production-plan-check": 0}
     assert out["people_this_week"] == [("Andreas", 1), ("Frederikke", 1)] and out["total"] == 8 + 24
 
 def test_today_and_people():
@@ -64,6 +64,19 @@ def test_repeated_logs_on_the_same_order_count_once():
     out = su.build(FakeDrive(rep), dt.date(2026, 10, 21))
     assert out["this_week"]["tracelink-order-closeout"] == 3            # 1022905, 1022927, 1023104
     assert out["this_week"]["pick-3pl-goods"] == 1 and out["this_week"]["internal-purchase"] == 2
+
+def test_production_plan_check_counts_every_question():
+    # real log names (9 Nov 2026, Ellen and Frederikke)
+    logs = [F("Skill usage log - production-plan-check - 2026-11-09 1503 - Sour Pineapple CZ.txt", "ellen@truecompany.com"),
+            F("Skill usage log - production-plan-check - 2026-11-09 1508 - Cola PL Watermelon PL.txt", "ellen@truecompany.com"),
+            F("Skill usage log - production-plan-check - 2026-11-09 1510 - White CZ.txt", "ellen@truecompany.com"),
+            F("Skill usage log - production-plan-check - 2026-11-10 0900 - White CZ.txt", "ellen@truecompany.com"),  # asked again: counts
+            F("Skill usage log - production-plan-check - 2026-11-09 1517 - order 258688.txt", "frederikke.truegum@gmail.com"),
+            F("Skill usage log - tracelink-order-closeout - 2026-11-09 1000 - 1023348.txt", "frederikke.truegum@gmail.com"),
+            F("Skill usage log - tracelink-order-closeout - 2026-11-10 1000 - 1023348.txt", "frederikke.truegum@gmail.com")]  # repeat: once
+    out = su.build(FakeDrive(logs), dt.date(2026, 11, 10))
+    assert out["this_week"]["production-plan-check"] == 5 and out["this_week"]["tracelink-order-closeout"] == 1
+    assert "production-plan-check" in out["skills"]
 
 def test_not_connected_without_secret():
     out = su.build(su.Drive(sa_json=""), dt.date(2026, 10, 13))
