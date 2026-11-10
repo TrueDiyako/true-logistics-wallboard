@@ -600,6 +600,22 @@ def test_credit_split_by_skill_per_week():
     assert w["2026-W45"]["with_skill"] == 2 and w["2026-W45"]["without_skill"] == 3
     assert w["2026-W45"]["with_skill_pct"] == 4.0 and w["2026-W45"]["without_skill_pct"] == 6.0      # adds up to 10%
 
+def test_week_notes_for_clicking_a_column():
+    weekly = [{"week": "2026-W40", "pct": 12.0, "credits": 1, "invoices": 50},
+              {"week": "2026-W45", "pct": 10.0, "credits": 2, "invoices": 50}]
+    rows = [{"credit_note": 20700, "date": "2026-09-30", "internal": False, "customer": "Matas", "heading": "1280686", "orders": [1022841]},
+            {"credit_note": 21011, "date": "2026-11-04", "internal": False, "customer": "Salling", "heading": "4049", "orders": []},
+            {"credit_note": 21010, "date": "2026-11-03", "internal": False, "customer": "COOP", "heading": "4512", "orders": [1023154]},
+            {"credit_note": 21012, "date": "2026-11-05", "internal": True, "customer": "True GmbH", "heading": "", "orders": []}]
+    closeout = {"detail": [{"credit_note": 21010, "orders": [1023154], "closeout": True},
+                           {"credit_note": 21011, "orders": [1023209], "closeout": False}]}
+    w = {x["week"]: x for x in nightly.week_notes(weekly, rows, closeout)}
+    assert [n["credit_note"] for n in w["2026-W45"]["notes"]] == [21010, 21011]          # by date, internal left out
+    assert w["2026-W45"]["notes"][0]["closeout"] is True and w["2026-W45"]["notes"][1]["closeout"] is False
+    assert w["2026-W45"]["notes"][1]["orders"] == [1023209]                              # order found via the PO
+    assert w["2026-W40"]["notes"][0]["closeout"] is None                                  # before the skill: no verdict
+    assert w["2026-W40"]["notes"][0]["customer"] == "Matas" and w["2026-W40"]["notes"][0]["po"] == "1280686"
+
 def test_cph_now_is_naive_local():
     n = common.cph_now()
     assert n.tzinfo is None

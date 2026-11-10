@@ -222,3 +222,10 @@ orders closed out with the tracelink-order-closeout skill is stacked in green;
 together they make the week's total.
 Nightly job (split_by_skill), from the same credit note -> order -> closeout-log matching as the
 "not using order-closeout skill" headline.
+
+## Credit-notes panel layout (10 Nov 2026)
+No headline figures and no y-axis: every column carries its % label; split columns (from week 41) label
+the red and green parts (beside the bar when a part is too thin). The chart draws to the panel's
+actual shape (StackedTotals fill). Clicking a column opens that week's credit notes (nightly week_notes:
+credit note, date, customer, customer order, TraceLink order, and from week 41 "used"/"not used").
+The top bar shows the ISO week ("WK46") before the date on every page.

@@ -23,3 +23,12 @@ export const fmtNum = (n: number) => {
   return (n < 0 ? "-" : "") + s.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
 };
 export const fmtOneDecimal = (n: number) => (Math.round(n * 10) / 10).toFixed(Math.abs(n) >= 10 ? 0 : 1);
+
+// ISO week number, e.g. 46 for Tue 10 Nov 2026
+export const isoWeek = (d: Date) => {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  return Math.ceil(((t.getTime() - y0.getTime()) / 86400000 + 1) / 7);
+};

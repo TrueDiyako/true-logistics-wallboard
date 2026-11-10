@@ -167,43 +167,74 @@ export function ClusteredBars({ labels, series, height = H0 }: { labels: string[
   );
 }
 
-// Stacked bars on a % axis fitted to the data: per week the segments stack to the week's total.
+// Stacked bars fitted to the data: per week the segments stack to the week's total.
+// axis=false: no y-axis, every column gets its total as a label; a split column also labels each
+// segment. onBar(i): click on column i.
 export type Seg = { value: number | null; color: string };
-export function StackedTotals({ labels, stacks, height = H0 }: { labels: string[]; stacks: Seg[][]; height?: number }) {
-  const H = height;
+export function StackedTotals({ labels, stacks, height = H0, axis = true, onBar, fill = false }:
+  { labels: string[]; stacks: Seg[][]; height?: number; axis?: boolean; onBar?: (i: number) => void; fill?: boolean }) {
+  // fill: draw to the shape of the space the chart has (full width and height of the panel)
+  const box = React.useRef<HTMLDivElement>(null);
+  const [shape, setShape] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (!fill || !box.current || typeof ResizeObserver === "undefined") return;
+    const el = box.current;
+    const set = () => { if (el.clientWidth > 0 && el.clientHeight > 0) setShape(el.clientHeight / el.clientWidth); };
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fill]);
+  const H = fill && shape ? Math.max(260, Math.round(W * shape)) : height;
+  const Lx = axis ? L : 20;
   const totals = stacks.map((st) => st.reduce((a, s) => a + (s.value || 0), 0));
   const dataMax = Math.max(1, ...totals);
-  const top = [10, 20, 25, 50, 100].find((t) => t >= dataMax * 1.04) ?? 100;
+  const top = axis ? ([10, 20, 25, 50, 100].find((t) => t >= dataMax * 1.04) ?? 100) : dataMax * 1.12;
   const n = Math.max(labels.length, 1);
-  const slot = (W - L - R) / n;
+  const slot = (W - Lx - R) / n;
   const bw = slot * 0.62;
-  const y = (v: number) => T + (1 - v / top) * (H - T - B);
-  return (
+  const y = (v: number) => T + 30 + (1 - v / top) * (H - T - 30 - B);
+  const fmt = (v: number) => `${Math.round(v)}%`;
+  const svg = (
     <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img">
-      {[0, 1, 2, 3, 4].map((i) => i * (top / 4)).map((g) => (
+      {axis && [0, 1, 2, 3, 4].map((i) => i * (top / 4)).map((g) => (
         <g key={g}>
-          <line x1={L} x2={W - R} y1={y(g)} y2={y(g)} className="grid" />
-          <text x={L - 12} y={y(g) + 8} className="axis" textAnchor="end">{Math.round(g * 10) / 10}%</text>
+          <line x1={Lx} x2={W - R} y1={y(g)} y2={y(g)} className="grid" />
+          <text x={Lx - 12} y={y(g) + 8} className="axis" textAnchor="end">{Math.round(g * 10) / 10}%</text>
         </g>
       ))}
+      {!axis && <line x1={Lx} x2={W - R} y1={y(0)} y2={y(0)} className="grid" />}
       {labels.map((l, i) => {
-        const x0 = L + slot * i + (slot - bw) / 2;
+        const x0 = Lx + slot * i + (slot - bw) / 2;
+        const segs = stacks[i].filter((s) => s.value);
+        const split = segs.length > 1;
         let acc = 0;
         return (
-          <g key={l}>
-            <text x={L + slot * (i + 0.5)} y={H - 14} className="axis" textAnchor="middle">{weekLabel(l)}</text>
+          <g key={l} className={onBar ? "bar clickable" : "bar"} onClick={onBar ? () => onBar(i) : undefined}>
+            <rect x={Lx + slot * i} y={T} width={slot} height={H - T - B + 10} fill="transparent" />
+            <text x={L === Lx ? Lx + slot * (i + 0.5) : Lx + slot * (i + 0.5)} y={H - 14} className="axis" textAnchor="middle">{weekLabel(l)}</text>
             {stacks[i].map((s, k) => {
               if (!s.value) return null;
               const y1 = y(acc + s.value), y0 = y(acc);
               acc += s.value;
-              return <rect key={k} x={x0} y={y1} width={bw} height={Math.max(y0 - y1, 0)} fill={s.color} />;
+              const h = Math.max(y0 - y1, 0);
+              return (
+                <g key={k}>
+                  <rect x={x0} y={y1} width={bw} height={h} fill={s.color} />
+                  {!axis && split && h >= 26 && (
+                    <text x={x0 + bw / 2} y={y1 + h / 2 + 8} className="seglabel" textAnchor="middle">{fmt(s.value)}</text>)}
+                  {!axis && split && h < 26 && (
+                    <text x={x0 + bw + 5} y={y1 + h / 2 + 7} className="seglabel side" textAnchor="start" style={{ fill: s.color }}>{fmt(s.value)}</text>)}
+                </g>
+              );
             })}
-            {i === labels.length - 1 && totals[i] > 0 && (
+            {(!axis || i === labels.length - 1) && totals[i] > 0 && (
               <text x={x0 + bw / 2} y={y(totals[i]) - 10} className="pointlabel small" textAnchor="middle" fill="currentColor">
-                {Math.round(totals[i])}%</text>)}
+                {fmt(totals[i])}</text>)}
           </g>
         );
       })}
     </svg>
   );
+  return fill ? <div className="chartbox" ref={box}>{svg}</div> : svg;
 }

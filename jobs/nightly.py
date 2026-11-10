@@ -269,6 +269,27 @@ def split_by_skill(weekly, rows, closeout):
     return weekly
 
 
+def week_notes(weekly, rows, closeout):
+    """For the click on a column: each week's credit notes (credit note, date, customer, customer
+    order, TraceLink order(s), and from week 41 whether the order was closed out with the skill)."""
+    detail = {d["credit_note"]: d for d in (closeout or {}).get("detail", [])}
+    start = iso_week(dt.date.fromisoformat(CLOSEOUT_FROM))
+    by_week = {}
+    for r in rows:
+        if r.get("internal"):
+            continue
+        day = dt.date.fromisoformat(str(r["date"])[:10])
+        w = iso_week(day)
+        d = detail.get(r["credit_note"], {})
+        by_week.setdefault(w, []).append({
+            "credit_note": r["credit_note"], "date": day.isoformat(), "customer": r.get("customer", ""),
+            "po": str(r.get("heading") or ""), "orders": d.get("orders") or r.get("orders") or [],
+            "closeout": d.get("closeout") if w >= start and d else None})
+    for w in weekly:
+        w["notes"] = sorted(by_week.get(w["week"], []), key=lambda x: (x["date"], x["credit_note"]))
+    return weekly
+
+
 def credit_payload(weekly, rows, today=None):
     scope = [r for r in rows if not r["internal"]]
     inv = sum(w["invoices"] for w in weekly)          # headline: the whole window
@@ -383,6 +404,7 @@ def main(tl=None, graph=None, econ=None, today=None):
             traceback.print_exc()
             print(f"closeout share failed: {type(e).__name__}: {e}", flush=True)
             c["closeout_error"] = f"{type(e).__name__}: {e}"[:200]
+        c["weekly"] = week_notes(c["weekly"], rows, c.get("closeout"))     # for clicking a column
         payload["credit"] = c
 
     h.section("otif", otif)

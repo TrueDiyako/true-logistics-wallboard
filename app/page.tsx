@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import { DASHBOARDS, Data } from "@/components/dashboards";
-import { fmtClockDate, fmtTime } from "@/lib/fmt";
+import { fmtClockDate, fmtTime, isoWeek } from "@/lib/fmt";
 
 const REFRESH_MS = 5 * 60 * 1000;          // data
 const RELOAD_MS = 6 * 60 * 60 * 1000;      // full page reload (picks up new deployments)
@@ -105,13 +105,11 @@ export default function Wallboard() {
             <button key={d.id} className={"tab" + (i === idx ? " on" : "")} onClick={() => go(i)}>{d.tab}</button>
           ))}
           <button className="arrow" onClick={() => go(idx + 1)} aria-label="Next page">›</button>
-          <button className={"pause" + (paused ? " on" : "")} onClick={togglePause}
-                  title={paused ? "Resume rotation" : "Pause rotation"}>{paused ? "▶" : "❚❚"}</button>
         </nav>
         <div className="meta">
-          {paused && <span className="paused">{pausedUntil === Infinity ? "paused" : resumeAt ? `rotation resumes ${resumeAt}` : "pinned"} · </span>}
+          {paused && !resumeAt && <span className="paused">{pausedUntil === Infinity ? "paused" : "pinned"} · </span>}
           {updated && <>updated {fmtTime(new Date(updated))} · </>}
-          {fmtClockDate(now)} {fmtTime(now)}
+          WK{String(isoWeek(now)).padStart(2, "0")} · {fmtClockDate(now)} {fmtTime(now)}
         </div>
       </header>
       {warn.length > 0 && <div className="banner">{warn.join("  ·  ")}</div>}

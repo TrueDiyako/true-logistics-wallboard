@@ -168,3 +168,10 @@ header .title { flex: 0 1 auto; white-space: nowrap; }
 .undo span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .undo button { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--panel); border-radius: 1vw; padding: .3vh 1vw; font-weight: 600; }
 .chart .pointlabel.small { font-size: 22px; }
+
+.chart .seglabel { font-size: 20px; font-weight: 700; fill: #fff; }
+.chart .bar.clickable { cursor: pointer; }
+.chart .bar.clickable:hover rect:not([fill="transparent"]) { opacity: .85; }
+.chartbox { flex: 1; min-height: 0; width: 100%; display: flex; }
+.chartbox .chart { flex: 1; height: 100%; }
+.chart .seglabel.side { font-size: 18px; }

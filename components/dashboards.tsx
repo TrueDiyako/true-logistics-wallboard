@@ -148,57 +148,55 @@ const OWNER_COLORS: Record<string, string> = {
   Valentina: "#4F7A80", Frederikke: "#C9922E", Andreas: "#8C5B3E", "No owner": "#A8A29A" };
 
 // the credit notes behind the "not closed out" figure; opens on click (browser), closes on click
-function CloseoutList({ co, onClose }: { co: any; onClose: () => void }) {
+// the credit notes of one week; opens when a column is clicked (browser and TV), closes on click
+function WeekCreditList({ week, onClose }: { week: any; onClose: () => void }) {
+  const notes = week.notes || [];
+  const split = notes.some((r: any) => r.closeout != null);
+  const used = notes.filter((r: any) => r.closeout === true).length;
   return (
     <div className="overlay" onClick={onClose}>
       <div className="overlaybox" onClick={(e) => e.stopPropagation()}>
-        <div className="overlayhead"><b>Credit notes since week 41</b>
-          <span>{co.without_closeout} of {co.credit_notes} on orders not closed out with the order-closeout skill</span>
+        <div className="overlayhead"><b>Credit notes week {String(week.week).split("-W")[1]}</b>
+          <span>{week.credits} of {week.invoices} invoices credited ({pct(week.pct)})
+            {split ? ` · ${used} of ${notes.length} on orders closed out with the order-closeout skill` : ""}</span>
           <button onClick={onClose}>Close</button></div>
-        <table className="table">
-          <thead><tr><th>Credit note</th><th>Date</th><th>Customer</th><th>Customer order</th><th>TraceLink order</th><th>Order closeout</th></tr></thead>
-          <tbody>
-            {(co.detail || []).map((r: any) => (
-              <tr key={r.credit_note}>
-                <td>{r.credit_note}</td><td>{r.date ? day(r.date) : ""}</td><td>{r.customer}</td><td className="po">{r.po}</td>
-                <td>{(r.orders || []).join(", ") || "not found"}</td>
-                <td className={r.closeout ? "good" : "bad"}>{r.closeout ? "used" : "not used"}</td>
-              </tr>))}
-          </tbody>
-        </table>
+        {notes.length === 0 ? <div className="empty">No credit notes this week</div> : (
+          <table className="table">
+            <thead><tr><th>Credit note</th><th>Date</th><th>Customer</th><th>Customer order</th><th>TraceLink order</th>
+              {split && <th>Order closeout</th>}</tr></thead>
+            <tbody>
+              {notes.map((r: any) => (
+                <tr key={r.credit_note}>
+                  <td>{r.credit_note}</td><td>{r.date ? day(r.date) : ""}</td><td>{r.customer}</td><td className="po">{r.po}</td>
+                  <td>{(r.orders || []).join(", ") || "not found"}</td>
+                  {split && <td className={r.closeout === true ? "good" : r.closeout === false ? "bad" : ""}>
+                    {r.closeout === true ? "used" : r.closeout === false ? "not used" : "–"}</td>}
+                </tr>))}
+            </tbody>
+          </table>)}
       </div>
     </div>
   );
 }
 
-const CLOSEOUT_COLORS = { with: "#5E6B2E", without: "#C9922E", before: "#B7AFA4" };
+const CLOSEOUT_GREEN = "#5E6B2E";
 
 function CreditPanel({ c }: { c: any }) {
-  const [open, setOpen] = useState(false);
+  const [openWeek, setOpenWeek] = useState<number | null>(null);
   const w = c.weekly || [];
-  const co = c.closeout;
-  const items: any[] = [{ label: `${c.headline.credits} of ${c.headline.invoices} invoices, 13 weeks`,
-                          value: pct(c.headline.credit_pct), color: C.credit }];
-  if (co && co.credit_notes)
-    items.push({ label: "Percentage of credit notes not using order-closeout skill",
-                 value: pct(co.pct_without_closeout), color: C.noReply, onClick: () => setOpen(true) });
-  else if (c.closeout_error)
-    items.push({ label: "Percentage of credit notes not using order-closeout skill (not available)",
-                 value: "–", color: C.noReply });
   // per week: red = credit notes, green = the part on orders closed out with the order-closeout skill
   const stacks = w.map((x: any) => {
     const withSkill = x.with_skill_pct || 0;
-    return [{ value: Math.max((x.pct || 0) - withSkill, 0), color: C.credit },
-            { value: withSkill, color: CLOSEOUT_COLORS.with }];
+    return [{ value: Math.max((x.pct || 0) - withSkill, 0), color: C.credit }, { value: withSkill, color: CLOSEOUT_GREEN }];
   });
   const anySkill = w.some((x: any) => (x.with_skill_pct || 0) > 0);
   return (
-    <Panel title="Credit notes" note="% of invoices credited per week">
-      <Headlines items={items} />
-      <StackedTotals labels={w.map((x: any) => x.week)} stacks={stacks} />
+    <Panel title="Credit notes" note="% of invoices credited per week · click a column for its credit notes">
+      <StackedTotals labels={w.map((x: any) => x.week)} stacks={stacks} axis={false} fill
+                     onBar={(i) => { setOpenWeek(i); window.dispatchEvent(new Event("wallboard:interact")); }} />
       {anySkill && <Legend items={[{ label: "Credit notes", color: C.credit },
-                                   { label: "Of which the order was closed out with the skill", color: CLOSEOUT_COLORS.with }]} />}
-      {open && co && <CloseoutList co={co} onClose={() => setOpen(false)} />}
+                                   { label: "Of which the order was closed out with the skill", color: CLOSEOUT_GREEN }]} />}
+      {openWeek != null && w[openWeek] && <WeekCreditList week={w[openWeek]} onClose={() => setOpenWeek(null)} />}
     </Panel>
   );
 }
